@@ -1,0 +1,66 @@
+version: "3.9"
+
+# Phase 1 scope (design-doc-v6.md §13): SFU + minimal auth walking skeleton.
+# wake-service / messaging-service (Phases 5-6) are stubbed as folders only —
+# not wired in here yet. See §1a for the still-open port-forward/tunnel
+# decision this stack depends on for reachability beyond the local network.
+
+services:
+  nginx:
+    build: ./infra/nginx
+    env_file: .env
+    ports:
+      - "443:443"
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+    depends_on:
+      - livekit
+      - auth-service
+    volumes:
+      - certs:/etc/letsencrypt:ro
+    restart: unless-stopped
+
+  coturn:
+    build: ./infra/coturn
+    env_file: .env
+    network_mode: "service:nginx" # shares nginx's network namespace so the
+    # stream{} block in infra/nginx/nginx.conf.template can reach it at
+    # 127.0.0.1:5349. Port mappings live on the nginx service above since a
+    # container in `network_mode: service:X` can't declare its own ports.
+    volumes:
+      - certs:/etc/letsencrypt:ro
+    restart: unless-stopped
+
+  livekit:
+    build: ./infra/livekit
+    env_file: .env
+    ports:
+      - "7881:7881/tcp"
+      - "50000-50100:50000-50100/udp"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  auth-service:
+    build: ./services/auth-service
+    env_file: .env
+    volumes:
+      - sqlite-data:/data
+    depends_on:
+      - livekit
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  sqlite-data:
+  certs:
+    # Populate via certbot/acme.sh against ${PUBLIC_HOSTNAME} (§11) before
+    # bringing this stack up for real; local dev can use a self-signed cert
+    # in the interim (see README's Phase 1 test walkthrough).

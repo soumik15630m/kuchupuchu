@@ -1,0 +1,32 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+turn_server_cert/
+
+# node
+node_modules/
+dist/
+npm-debug.log*
+
+# python (future services)
+__pycache__/
+*.pyc
+.venv/
+
+# sqlite data (bind-mounted volume, never commit real data)
+data/
+*.sqlite
+*.sqlite3
+
+# android / next.js (phase 5 placeholders)
+clients/android/.gradle/
+clients/android/build/
+clients/web/.next/
+clients/web/node_modules/
+
+# os
+.DS_Store

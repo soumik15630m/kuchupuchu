@@ -1,0 +1,47 @@
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+# ---- Stream layer: SNI demux on 443 (§7.1) ----
+# One TLS-terminating front door on 443. Traffic whose ClientHello SNI matches the
+# TURN hostname is passed raw (still encrypted, undecrypted) to coturn; everything
+# else goes to the http block below, which does the real TLS termination.
+#
+# Hard constraint (§7.1): every ICE server entry MUST use this hostname, never a bare
+# IP, or this demux has nothing to match on and TURN/TLS silently stops working.
+stream {
+    map $ssl_preread_server_name $upstream {
+        "${PUBLIC_HOSTNAME}"      turn_backend;
+        default                   app_backend;
+    }
+
+    upstream turn_backend {
+        server 127.0.0.1:5349;   # coturn's TURN/TLS listener (shares this
+        # container's network namespace — see docker-compose.yml's
+        # `network_mode: service:nginx` on the coturn service).
+    }
+
+    upstream app_backend {
+        server 127.0.0.1:8443; # forwarded into the http block's TLS server below
+    }
+
+    server {
+        listen 443;
+        listen [::]:443;
+        proxy_pass $upstream;
+        ssl_preread on;
+    }
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+    keepalive_timeout 65;
+
+    # Actual TLS termination + app/LiveKit routing lives here, reached only via the
+    # stream block's app_backend upstream above (loopback, not exposed directly).
+    include /etc/nginx/conf.d/*.conf;
+}

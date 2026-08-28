@@ -1,0 +1,27 @@
+# LiveKit server config (§2, §3). No transcoding — pure SFU forwarding.
+port: 7880
+rtc:
+  tcp_port: 7881
+  # Narrowed UDP relay range kept in sync with coturn's (§8).
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
+
+redis:
+  address: redis:6379
+
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+
+# Standalone coturn (§2's note) is used instead of LiveKit's own built-in TURN,
+# so turn is left disabled here — clients get TURN candidates from coturn via
+# the ICE server list the auth-service hands them (§7.1), not from LiveKit.
+turn:
+  enabled: false
+
+room:
+  # Concurrency gate (§4) — enforced server-side, can't be bypassed by a
+  # modified client.
+  max_participants: 5
+  empty_timeout: 300
+  departure_timeout: 20
