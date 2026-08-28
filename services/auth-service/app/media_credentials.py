@@ -8,14 +8,24 @@ from datetime import timedelta
 from livekit import api
 
 
-def mint_room_token(email: str, room_name: str) -> str:
+def mint_room_token(device_id: str, email: str, room_name: str) -> str:
     """Short-lived, room-scoped JWT room tokens (§9) — not static shared
     credentials. §4's concurrency gate (max 5) is enforced server-side by
     LiveKit itself (room.max_participants in livekit.yaml), not here; this
-    just grants join permission for an allowlisted, OTP-verified identity."""
+    just grants join permission for an allowlisted, OTP-verified identity.
+
+    Identity (§4/§13 Phase 2): the LiveKit participant identity is the
+    *device* id, not the email. A person can hold up to 2 active devices
+    (§4), and revocation needs to disconnect exactly the revoked device's
+    live session without touching that same person's other device that
+    might be on the same call — that's only possible if each device has
+    its own identity. `email` is still carried as the human-readable
+    participant name for client UI.
+    """
     token = (
         api.AccessToken(os.environ["LIVEKIT_API_KEY"], os.environ["LIVEKIT_API_SECRET"])
-        .with_identity(email)
+        .with_identity(device_id)
+        .with_name(email)
         .with_ttl(timedelta(minutes=10))  # just long enough to connect
         .with_grants(
             api.VideoGrants(
