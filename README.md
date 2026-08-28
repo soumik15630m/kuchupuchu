@@ -3,8 +3,9 @@
 Design doc: [`docs/design-doc-v6.md`](./docs/design-doc-v6.md) — read §1a (hosting), §3a (this
 repo's layout), and §13 (implementation phases) first.
 
-**Current status: Phase 1 (§13)** — SFU + minimal auth walking skeleton. `wake-service`,
-`messaging-service`, and both `clients/` are placeholders until Phase 5/6.
+**Current status: Phase 2 (§13)** — access control & revocation, on top of Phase 1's
+SFU + minimal auth walking skeleton. `wake-service`, `messaging-service`, and both
+`clients/` are placeholders until Phase 5/6.
 
 ## Prerequisites
 
@@ -84,12 +85,14 @@ curl -k -X POST https://localhost/auth/otp/request \
   -d '{"email":"you@example.com"}'
 ```
 
-**2. Verify it** (grab the code from the logs):
+**2. Verify it** (grab the code from the logs). Since Phase 2, this also registers a
+device — `deviceId` is whatever your client generates and persists on first login
+(§4); for this walkthrough, make one up:
 
 ```bash
 curl -k -X POST https://localhost/auth/otp/verify \
   -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","code":"123456"}'
+  -d '{"email":"you@example.com","code":"123456","deviceId":"my-test-device","platform":"web"}'
 ```
 
 Save the `accessToken` from the response.
@@ -105,15 +108,68 @@ curl -k -X POST https://localhost/auth/room/token \
 
 Save the `roomToken` and `livekitUrl` from the response.
 
-**4. Join the room** with `livekit-cli`:
+**4. Join the room** with `livekit-cli`. Since Phase 2, the LiveKit participant
+identity is your **device id**, not your email (§4/§13 — this is what lets
+revocation disconnect one device without touching your other one):
 
 ```bash
 lk room join --url <livekitUrl> --api-key devkey --api-secret <LIVEKIT_API_SECRET> \
-  --identity you@example.com test-room
+  --identity my-test-device test-room
 ```
 
 Repeat steps 1-4 with a second allowlisted email from a second device to get
 two participants in the same room — that's Phase 1's actual finish line.
+
+## Phase 2 walkthrough: access control & revocation
+
+This exercises §13 Phase 2's "done when" bar — revoking a device that's mid-call
+disconnects it within a couple of seconds, and the other party sees a
+device-list-changed signal without refreshing.
+
+**1. Register a second device** for the same person (repeat the OTP dance from
+above with a different `deviceId`, e.g. `my-test-device-2`, `platform: android`).
+A third device for the same email gets rejected — `403`, "already has 2 active
+devices" — that's the §4 per-person device cap.
+
+**2. List your devices:**
+
+```bash
+curl -k https://localhost/auth/devices/me -H "Authorization: Bearer <accessToken>"
+```
+
+**3. Start a call from `my-test-device`** (step 4 above, left running in a
+terminal), then, from a *second* terminal, **revoke it** using the access token
+from `my-test-device-2` (a device can only revoke itself or its owner's other
+devices — see `app/routers/devices.py` for the scope note on why this doesn't
+extend to revoking someone else's devices yet):
+
+```bash
+curl -k -X POST https://localhost/auth/devices/my-test-device/revoke \
+  -H "Authorization: Bearer <accessToken-for-my-test-device-2>"
+```
+
+The response's `disconnectedLiveSession` tells you whether it found and killed
+a live LiveKit session for that device. Check the first terminal — `lk room
+join` should exit within a couple of seconds, not hang until the room token's
+10-minute TTL runs out. That's the RemoveParticipant teardown (§4 v5 fix), not
+just a DB flag that the next connection attempt would have caught.
+
+**4. Confirm it can't come back**: re-running step 3's `otp/verify` for
+`my-test-device` now 403s ("this device was revoked"), and its old
+`accessToken`/`refreshToken` are rejected by `/room/token` and `/token/refresh`
+respectively — the DB-status lookup (§4), not just JWT signature/expiry.
+
+**5. Watch the banner precursor.** There's no wake-service push until Phase 5,
+so this is polling-based for now:
+
+```bash
+curl -k https://localhost/auth/devices/versions -H "Authorization: Bearer <accessToken>"
+```
+
+The revoke in step 3 bumped `you@example.com`'s counter. A real client polls
+this for its contacts and shows the device-list-changed banner on a bump —
+piggyback it on the existing 15-minute token refresh once there's an actual
+client loop to hang it off of.
 
 ## Repo layout
 
