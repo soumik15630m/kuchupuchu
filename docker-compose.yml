@@ -60,7 +60,3 @@ services:
 volumes:
   redis-data:
   sqlite-data:
-  certs:
-    # Populate via certbot/acme.sh against ${PUBLIC_HOSTNAME} (§11) before
-    # bringing this stack up for real; local dev can use a self-signed cert
-    # in the interim (see README's Phase 1 test walkthrough).

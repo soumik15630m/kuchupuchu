@@ -6,6 +6,7 @@
 *.key
 *.crt
 turn_server_cert/
+certs/
 
 # node
 node_modules/

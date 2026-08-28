@@ -1,21 +1,12 @@
-FROM node:22-bookworm-slim AS build
+FROM python:3.12-slim
 WORKDIR /app
-# better-sqlite3 needs build tools to compile its native binding.
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json* ./
-RUN npm install
-COPY . .
-RUN npm run build
+ENV PYTHONUNBUFFERED=1
 
-FROM node:22-bookworm-slim
-WORKDIR /app
-ENV NODE_ENV=production
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
-COPY --from=build /app/dist ./dist
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
 COPY migrations ./migrations
+
 EXPOSE 8080
-CMD ["sh", "-c", "node dist/lib/migrate.js && node dist/index.js"]
+CMD ["sh", "-c", "python -m app.migrate && uvicorn app.main:app --host 0.0.0.0 --port ${AUTH_PORT:-8080}"]
