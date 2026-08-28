@@ -10,8 +10,8 @@ server {
 
     # LiveKit signaling (WSS) — SFU handles the actual media, this is just
     # the signaling/control-plane WebSocket.
-    location /livekit/ {
-        proxy_pass http://livekit:7880/;
+    location / {
+        proxy_pass http://livekit:7880;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

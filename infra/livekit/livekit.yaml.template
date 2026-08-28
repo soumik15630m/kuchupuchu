@@ -3,8 +3,8 @@ port: 7880
 rtc:
   tcp_port: 7881
   # Narrowed UDP relay range kept in sync with coturn's (§8).
-  port_range_start: 50000
-  port_range_end: 50100
+  port_range_start: 20000
+  port_range_end: 20100
   use_external_ip: true
 
 redis:

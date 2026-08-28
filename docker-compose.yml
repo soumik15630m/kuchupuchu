@@ -18,7 +18,7 @@ services:
       - livekit
       - auth-service
     volumes:
-      - certs:/etc/letsencrypt:ro
+      - ./certs:/etc/letsencrypt:ro
     restart: unless-stopped
 
   coturn:
@@ -29,7 +29,7 @@ services:
     # 127.0.0.1:5349. Port mappings live on the nginx service above since a
     # container in `network_mode: service:X` can't declare its own ports.
     volumes:
-      - certs:/etc/letsencrypt:ro
+      - ./certs:/etc/letsencrypt:ro
     restart: unless-stopped
 
   livekit:
@@ -37,7 +37,7 @@ services:
     env_file: .env
     ports:
       - "7881:7881/tcp"
-      - "50000-50100:50000-50100/udp"
+      - "20000-20100:20000-20100/udp"
     depends_on:
       - redis
     restart: unless-stopped
