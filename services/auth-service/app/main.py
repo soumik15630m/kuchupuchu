@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from app.devices import expire_stale_web_devices
 from app.routers import auth as auth_router
 from app.routers import devices as devices_router
+from app.routers import quality as quality_router
 from app.routers import room as room_router
 
 logger = logging.getLogger(__name__)
@@ -56,3 +57,4 @@ def healthz():
 app.include_router(auth_router.router)
 app.include_router(room_router.router, prefix="/room")
 app.include_router(devices_router.router, prefix="/devices")
+app.include_router(quality_router.router, prefix="/quality")
