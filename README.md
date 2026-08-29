@@ -66,12 +66,21 @@ Production: run acme.sh/certbot against both `PUBLIC_HOSTNAME` and
 `/etc/letsencrypt` (Let's Encrypt's own directory layout —
 `live/<hostname>/fullchain.pem` + `privkey.pem`, one directory per hostname).
 
-Local dev, before §1a is resolved: generate throwaway self-signed certs for
-both hostnames, into the same layout:
+Local dev, before §1a is resolved: two options, both writing into the same
+layout. Prefer mkcert if you have it (or can install it) — its certs are
+trusted automatically by `lk`, curl, and browsers, unlike a plain
+self-signed cert:
 
 ```bash
+./scripts/dev-mkcert-cert.sh   # preferred — https://github.com/FiloSottile/mkcert
+# or, if you don't want to install mkcert:
 ./scripts/dev-selfsigned-cert.sh
 ```
+
+With the plain self-signed script, `curl -k` and browser click-through-
+warning both still work, but non-browser clients like `lk` validate TLS
+strictly and will reject it — you'd need to manually trust the generated
+cert (e.g. import it into your OS's trusted root store) for those to work.
 
 (You'll need to tell your test client to trust it, or accept the certificate
 warning — expected for local-only testing, not something to do once this is
