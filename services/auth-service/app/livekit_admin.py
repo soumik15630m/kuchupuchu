@@ -44,11 +44,20 @@ async def remove_participant_everywhere(identity: str) -> bool:
     problem here shouldn't block the DB-side revoke, which is what
     actually stops the device from reconnecting.
     """
-    url = os.environ.get("LIVEKIT_URL")
+    # Deliberately LIVEKIT_INTERNAL_URL, not LIVEKIT_URL -- see the comment
+    # on auth-service's environment block in docker-compose.yml. LIVEKIT_URL
+    # is what's handed to *external clients*; this is a server-to-server
+    # call over the compose network and has no reason to go through nginx's
+    # public TLS front door at all.
+    url = os.environ.get("LIVEKIT_INTERNAL_URL")
     api_key = os.environ.get("LIVEKIT_API_KEY")
     api_secret = os.environ.get("LIVEKIT_API_SECRET")
     if not (url and api_key and api_secret):
-        logger.warning("LiveKit not configured; skipping live-session teardown for %s", identity)
+        logger.warning(
+            "LIVEKIT_INTERNAL_URL/LIVEKIT_API_KEY/LIVEKIT_API_SECRET not set; "
+            "skipping live-session teardown for %s",
+            identity,
+        )
         return False
 
     removed_from_any = False

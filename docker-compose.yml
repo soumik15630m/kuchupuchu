@@ -53,6 +53,18 @@ services:
     env_file: .env
     volumes:
       - sqlite-data:/data
+    environment:
+      # Server-to-server admin API calls (RemoveParticipant on revoke,
+      # app/livekit_admin.py) go straight to LiveKit over the compose
+      # network -- NOT through nginx's public-facing LIVEKIT_URL. That
+      # hostname is meant for *external clients* and, for local dev in
+      # particular, may resolve to 127.0.0.1 (e.g. nip.io) wherever the
+      # lookup happens -- including from inside this very container, where
+      # 127.0.0.1 is auth-service's own loopback, not nginx's. Going direct
+      # to the "livekit" service name sidesteps that entirely, and there's
+      # no reason for internal admin calls to pay for the extra TLS hop
+      # anyway.
+      - LIVEKIT_INTERNAL_URL=http://livekit:7880
     depends_on:
       - livekit
     restart: unless-stopped
