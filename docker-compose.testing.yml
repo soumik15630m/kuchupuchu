@@ -1,0 +1,38 @@
+# Testing overlay for Phase 3 (§13) call-quality/reliability work.
+#
+# Not part of the base stack — apply on top of docker-compose.yml when you
+# want scripted, repeatable faults on the TURN/TLS-443 path (timed cuts,
+# added latency) instead of waiting for real network flakiness. See
+# scripts/toxiproxy-scenarios.sh for driving it.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.testing.yml up -d
+#
+# What changes vs. the base stack:
+#   - Adds a toxiproxy service.
+#   - Points nginx's turn_backend at toxiproxy instead of coturn directly.
+#     Toxiproxy's own upstream (configured via scripts/toxiproxy-scenarios.sh)
+#     points back at nginx:5349, which reaches coturn since coturn shares
+#     nginx's network namespace (network_mode: service:nginx in the base
+#     compose file). Nothing else in the request path changes — this only
+#     inserts one hop that can be told to misbehave on command.
+#
+# This does NOT touch the UDP media path (LiveKit RTP) — toxiproxy doesn't
+# support UDP well. For loss/latency/DPI-style UDP blocking on the media
+# path, use scripts/network-emulation.sh instead (host-level, keyed by
+# client IP). The two are complementary: this overlay is for the TCP/443
+# TURN/TLS fallback path specifically, which is exactly what needs to be
+# exercised for ICE-restart testing (§13 Phase 3's done bar).
+
+services:
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    ports:
+      - "8474:8474"   # toxiproxy's control API — scripts/toxiproxy-scenarios.sh talks to this
+    restart: unless-stopped
+
+  nginx:
+    environment:
+      - TURN_BACKEND_HOST=toxiproxy
+    depends_on:
+      - toxiproxy

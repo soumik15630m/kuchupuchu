@@ -27,9 +27,13 @@ stream {
     }
 
     upstream turn_backend {
-        server 127.0.0.1:5349;   # coturn's TURN/TLS listener (shares this
-        # container's network namespace — see docker-compose.yml's
-        # `network_mode: service:nginx` on the coturn service).
+        server ${TURN_BACKEND_HOST}:5349;   # coturn's TURN/TLS listener (shares
+        # this container's network namespace — see docker-compose.yml's
+        # `network_mode: service:nginx` on the coturn service). Defaults to
+        # 127.0.0.1 in docker-entrypoint.sh; docker-compose.testing.yml
+        # overrides this to route through toxiproxy for scripted fault
+        # injection (scripts/toxiproxy-scenarios.sh) without this file
+        # needing to know that testing exists.
     }
 
     upstream app_backend {
