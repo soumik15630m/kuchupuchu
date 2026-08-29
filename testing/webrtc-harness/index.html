@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>kuchupuchu — Phase 3 test harness</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0b0d12; color: #e6e8ee; margin: 2rem; }
+  h1 { font-size: 1.1rem; }
+  label { display: block; margin-top: 0.75rem; font-size: 0.85rem; color: #9aa4b2; }
+  input, textarea { width: 100%; font-family: monospace; background: #12151d; color: #e6e8ee; border: 1px solid #262a35; padding: 0.4rem; }
+  button { margin-top: 0.75rem; margin-right: 0.5rem; padding: 0.4rem 0.9rem; background: #262a35; color: #e6e8ee; border: 1px solid #3a3f4d; cursor: pointer; }
+  button:hover { background: #333947; }
+  button.active { background: #4ade80; color: #0b0d12; }
+  video { width: 320px; background: #000; margin-top: 1rem; }
+  #log { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; background: #12151d; padding: 0.75rem; margin-top: 1rem; max-height: 260px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<h1>kuchupuchu — Phase 3 test harness (not a real client — see README)</h1>
+
+<label>LiveKit server URL (wss://...)</label>
+<input id="url" placeholder="wss://livekit.example.com" />
+
+<label>Room token</label>
+<textarea id="token" rows="2"></textarea>
+
+<label>ICE server list JSON (from POST /auth/room/turn-credentials)</label>
+<textarea id="ice" rows="3">[]</textarea>
+
+<label>Access token (for /auth/quality/report)</label>
+<input id="accessToken" />
+
+<button id="connectBtn">Connect</button>
+<button id="disconnectBtn">Disconnect</button>
+<button id="dataSaverBtn">Toggle data saver</button>
+<button id="audioOnlyBtn">Toggle audio-only</button>
+
+<video id="localVideo" autoplay muted playsinline></video>
+<div id="remoteVideos"></div>
+
+<div id="log"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
