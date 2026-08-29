@@ -18,10 +18,30 @@ SFU + minimal auth walking skeleton. `wake-service`, `messaging-service`, and bo
 
 ```bash
 cp .env.example .env
-# edit .env: set PUBLIC_HOSTNAME, and generate real secrets for
-# LIVEKIT_API_SECRET / TURN_SHARED_SECRET, e.g.:
+# edit .env: set PUBLIC_HOSTNAME and TURN_HOSTNAME (two DIFFERENT hostnames —
+# see the comment above TURN_HOSTNAME in .env.example for why), and generate
+# real secrets for LIVEKIT_API_SECRET / TURN_SHARED_SECRET, e.g.:
 openssl rand -hex 32
 ```
+
+### Local DNS, before §1a is resolved
+
+Neither hostname needs to actually be publicly resolvable for same-machine
+testing, but something needs to resolve both `PUBLIC_HOSTNAME` and
+`TURN_HOSTNAME` to `127.0.0.1`, since real clients (`lk`, a browser, etc.) —
+unlike `curl -k https://localhost/...` — dial the hostname from
+`livekitUrl`/the ICE server list directly, not `localhost`. Add both to your
+hosts file:
+
+- macOS/Linux: `/etc/hosts`
+- Windows: `C:\Windows\System32\drivers\etc\hosts` (needs an elevated editor)
+
+```
+127.0.0.1  app.yourdomain.example
+127.0.0.1  turn-relay.yourdomain.example
+```
+
+(substitute whatever you actually set `PUBLIC_HOSTNAME`/`TURN_HOSTNAME` to).
 
 ### §1a's open decision: reachability
 
@@ -29,22 +49,25 @@ Before this is reachable from outside your own network (i.e. before a real
 Russia↔India call is possible, not just same-machine testing), pick one:
 
 - **Port-forward** 443, 3478/udp+tcp, and the relay port ranges in
-  `docker-compose.yml` on your router to this machine, and point
-  `PUBLIC_HOSTNAME`'s DNS at your public IP (dynamic DNS if it's not static), or
+  `docker-compose.yml` on your router to this machine, and point both
+  `PUBLIC_HOSTNAME`'s and `TURN_HOSTNAME`'s DNS at your public IP (dynamic DNS
+  if it's not static), or
 - **Tunnel** (e.g. a Cloudflare Tunnel or Tailscale Funnel) terminating at this
-  machine, with `PUBLIC_HOSTNAME` pointed at the tunnel's hostname instead.
+  machine, with `PUBLIC_HOSTNAME`/`TURN_HOSTNAME` pointed at the tunnel's
+  hostname(s) instead.
 
 This doc doesn't pick one for you — see design-doc-v6.md §1a. Same-machine
 testing below works either way, without this decision made yet.
 
 ### TLS certs
 
-Production: run acme.sh/certbot against `PUBLIC_HOSTNAME` and mount the result
-into the `certs` volume at `/etc/letsencrypt` (Let's Encrypt's own directory
-layout — `live/<hostname>/fullchain.pem` + `privkey.pem`).
+Production: run acme.sh/certbot against both `PUBLIC_HOSTNAME` and
+`TURN_HOSTNAME` and mount the results into the `certs` volume at
+`/etc/letsencrypt` (Let's Encrypt's own directory layout —
+`live/<hostname>/fullchain.pem` + `privkey.pem`, one directory per hostname).
 
-Local dev, before §1a is resolved: generate a throwaway self-signed cert into
-the same layout:
+Local dev, before §1a is resolved: generate throwaway self-signed certs for
+both hostnames, into the same layout:
 
 ```bash
 ./scripts/dev-selfsigned-cert.sh

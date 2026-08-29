@@ -6,7 +6,7 @@ listening-port=3478
 tls-listening-port=5349
 # ^ 5349 is what nginx's stream block forwards TURN/TLS traffic to internally.
 #   Clients never talk to 5349 directly — they connect to 443 with SNI set to
-#   ${PUBLIC_HOSTNAME}, and nginx routes it here undecrypted.
+#   ${TURN_HOSTNAME}, and nginx routes it here undecrypted.
 
 realm=${TURN_REALM}
 fingerprint
@@ -17,8 +17,8 @@ fingerprint
 use-auth-secret
 static-auth-secret=${TURN_SHARED_SECRET}
 
-cert=/etc/letsencrypt/live/${PUBLIC_HOSTNAME}/fullchain.pem
-pkey=/etc/letsencrypt/live/${PUBLIC_HOSTNAME}/privkey.pem
+cert=/etc/letsencrypt/live/${TURN_HOSTNAME}/fullchain.pem
+pkey=/etc/letsencrypt/live/${TURN_HOSTNAME}/privkey.pem
 
 # Narrowed relay range (§8) — tune once real usage patterns are known.
 min-port=49160

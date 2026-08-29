@@ -5,15 +5,24 @@ events {
 }
 
 # ---- Stream layer: SNI demux on 443 (§7.1) ----
-# One TLS-terminating front door on 443. Traffic whose ClientHello SNI matches the
-# TURN hostname is passed raw (still encrypted, undecrypted) to coturn; everything
-# else goes to the http block below, which does the real TLS termination.
+# One TLS-terminating front door on 443. Traffic whose ClientHello SNI matches
+# TURN_HOSTNAME is passed raw (still encrypted, undecrypted) to coturn;
+# everything else -- including PUBLIC_HOSTNAME, which is what clients dial for
+# the app itself and for LiveKit's WSS signaling -- goes to the http block
+# below, which does the real TLS termination.
 #
-# Hard constraint (§7.1): every ICE server entry MUST use this hostname, never a bare
-# IP, or this demux has nothing to match on and TURN/TLS silently stops working.
+# TURN_HOSTNAME and PUBLIC_HOSTNAME must be two different hostnames. If they
+# were ever the same, this demux couldn't distinguish "TURN traffic" from "a
+# client dialing the app/LiveKit", and app/LiveKit traffic would get routed to
+# coturn instead -- which doesn't speak HTTP or WS, so it just resets the
+# connection.
+#
+# Hard constraint (§7.1): every ICE server entry MUST use TURN_HOSTNAME, never
+# a bare IP, or this demux has nothing to match on and TURN/TLS silently stops
+# working.
 stream {
     map $ssl_preread_server_name $upstream {
-        "${PUBLIC_HOSTNAME}"      turn_backend;
+        "${TURN_HOSTNAME}"        turn_backend;
         default                   app_backend;
     }
 

@@ -51,13 +51,15 @@ def mint_turn_credentials(email: str) -> dict:
         hmac.new(secret.encode(), username.encode(), hashlib.sha1).digest()
     ).decode()
 
-    hostname = os.environ["PUBLIC_HOSTNAME"]
+    hostname = os.environ["TURN_HOSTNAME"]
     return {
         "username": username,
         "password": password,
         "ttl": ttl_seconds,
         # Hard constraint (§7.1): hostname, never a bare IP — required for
-        # the nginx SNI demux to route this correctly.
+        # the nginx SNI demux to route this correctly. Deliberately
+        # TURN_HOSTNAME, not PUBLIC_HOSTNAME — see nginx.conf.template's
+        # demux comment for why they must be two different hostnames.
         "uris": [
             f"turns:{hostname}:443?transport=tcp",
             f"turn:{hostname}:3478?transport=udp",
