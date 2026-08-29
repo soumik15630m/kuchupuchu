@@ -109,6 +109,7 @@ Industry-standard monorepo split: `infra/` for anything that's mostly config wra
 ```
 .
 ├── docker-compose.yml          # wires everything below together
+├── docker-compose.testing.yml   # Phase 3 overlay — toxiproxy in front of the TURN/TLS path
 ├── .env.example                 # copy to .env — see §1a's PUBLIC_HOSTNAME note
 ├── docs/
 │   └── design-doc-v6.md         # this file
@@ -117,13 +118,18 @@ Industry-standard monorepo split: `infra/` for anything that's mostly config wra
 │   ├── coturn/                  # standalone TURN/TLS relay (§2, §7.1)
 │   └── livekit/                 # SFU config (§2, §3)
 ├── services/                    # code we own
-│   ├── auth-service/            # OTP login, allowlist, JWT + TURN credential minting (§4) — Phase 1
+│   ├── auth-service/            # OTP login, allowlist, JWT + TURN credential minting (§4), device
+│   │                             # revocation (§13 Phase 2), call-quality reporting (§13 Phase 3)
 │   ├── wake-service/            # dual-channel FCM+WS wake (§10.2) — Phase 5, placeholder for now
 │   └── messaging-service/       # store-and-forward voice/file/text (§10.4) — Phase 6, placeholder for now
 ├── clients/
 │   ├── web/                     # Next.js + LiveKit JS SDK (§10.1) — Phase 5, placeholder for now
 │   └── android/                 # Kotlin + LiveKit Android SDK (§10.1) — Phase 5, placeholder for now
-└── scripts/                     # one-off operator scripts (dev certs, etc.) — not part of the runtime stack
+├── testing/
+│   └── webrtc-harness/          # throwaway browser harness for Phase 3 features (§13) — not a
+│                                # real client, exists only until Phase 5's clients replace it
+└── scripts/                     # one-off operator scripts (dev certs, network emulation, etc.) —
+                                 # not part of the runtime stack
 ```
 
 Each `services/*` and `clients/*` folder that isn't built yet ships with just a `README.md` stating what phase builds it and pointing back to the relevant doc section — so the tree always matches what actually exists, not what's planned.
@@ -361,7 +367,18 @@ Full device table (`active/revoked/expired`), per-device and per-person revoke, 
 
 ### Phase 3 — Call quality & Russia-path reliability
 Simulcast/Dynacast/adaptive stream, corrected ICE priority ordering (TURN/TLS as fallback, not forced-first), ICE restart, data-saver toggle, audio-only fallback, connection-quality logging/dashboard.
-**Done when**: a week of real calls on the actual link shows ICE-restart recovering from at least one real network hiccup without a full call drop, and the quality dashboard/logs show which candidate type (host/srflx/relay-UDP/relay-TCP) won each call.
+
+**Implemented** (see `testing/webrtc-harness/`, `services/auth-service/app/quality.py` + `routers/quality.py`, migration `003_phase3_quality_log.sql`):
+- Simulcast (3 layers: 180p/360p/720p) + Dynacast + adaptive stream, enabled via the LiveKit JS SDK's `publishDefaults`/room options.
+- ICE priority ordering — already correct at the infra layer (nginx/coturn, §7.1's v5 fix): TURN/TLS-443 is a configured candidate but not forced first, so UDP wins when available and TURN/TLS activates automatically only when it's genuinely needed.
+- ICE restart — handled by the LiveKit JS SDK's own reconnect policy; the harness surfaces `Reconnecting`/`Reconnected` events and logs the post-reconnect candidate pair.
+- Data-saver toggle — forces remote video subscriptions to LOW quality and republishes local video at a reduced resolution preset (not just a UI label).
+- Audio-only fallback — unpublishes local video; auto-triggers after a run of sustained `Poor` connection-quality events, in addition to manual toggle.
+- Connection-quality logging/dashboard — the harness POSTs periodic snapshots (quality enum, winning ICE candidate type, relay protocol, RTT/jitter/loss) to `/auth/quality/report`; view them at `/auth/quality/dashboard`.
+
+**Validation strategy (revised from v6)**: originally scoped as "a week of real calls on the actual link" — dropped in favor of local, repeatable emulation, since it doesn't depend on the counterparty's location or a finished client. Uses `scripts/network-emulation.sh` (host-level tc netem + iptables, keyed by one peer's LAN IP — asymmetric delay/jitter/loss, and simulated DPI-style UDP blocking that forces the TURN/TLS fallback) and `scripts/toxiproxy-scenarios.sh` (scripted, timed cuts on the TURN/TLS-443 path specifically, for on-demand ICE-restart testing) against two instances of `testing/webrtc-harness/` on the local docker-compose stack.
+
+**Done when**: running the harness from two tabs against the local stack, with `network-emulation.sh` applying Russia-representative latency/jitter/loss + UDP blocking to one peer and `toxiproxy-scenarios.sh cut` triggering at least one scripted TURN/TLS outage mid-call, the call recovers via ICE restart without a full drop, and the quality dashboard shows the correct candidate type (relay, with `tls` protocol) for the duration of the simulated block.
 
 ### Phase 4 — End-to-end encryption
 Signal Protocol (X3DH + Double Ratchet) as the shared key-agreement layer, SFrame frame encryption for calls, deterministic room-key rotation for group calls, prekey endpoint auth.

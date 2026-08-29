@@ -3,9 +3,11 @@
 Design doc: [`docs/design-doc-v6.md`](./docs/design-doc-v6.md) — read §1a (hosting), §3a (this
 repo's layout), and §13 (implementation phases) first.
 
-**Current status: Phase 2 (§13)** — access control & revocation, on top of Phase 1's
-SFU + minimal auth walking skeleton. `wake-service`, `messaging-service`, and both
-`clients/` are placeholders until Phase 5/6.
+**Current status: Phase 3 (§13)** — call quality & Russia-path reliability, on top of
+Phase 1's SFU + minimal auth walking skeleton and Phase 2's access control/revocation.
+`wake-service`, `messaging-service`, and both real `clients/` are placeholders until
+Phase 5/6 — `testing/webrtc-harness/` is a throwaway browser harness standing in for
+them so Phase 3's features have somewhere to run.
 
 ## Prerequisites
 
@@ -202,6 +204,59 @@ The revoke in step 3 bumped `you@example.com`'s counter. A real client polls
 this for its contacts and shows the device-list-changed banner on a bump —
 piggyback it on the existing 15-minute token refresh once there's an actual
 client loop to hang it off of.
+
+## Phase 3 walkthrough: call quality & Russia-path reliability
+
+This exercises §13 Phase 3's revised "done when" bar — local network emulation
+standing in for the real India/Russia link, since neither party needs to be on
+it to run this.
+
+**1. Bring up the testing overlay** (adds toxiproxy in front of the TURN/TLS path):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.testing.yml up -d
+./scripts/toxiproxy-scenarios.sh setup
+```
+
+**2. Serve the harness** and open it in two browser tabs:
+
+```bash
+cd testing/webrtc-harness && python3 -m http.server 8000
+```
+
+In each tab, paste a room token and the ICE server list — both come back from
+the same call: `POST /auth/room/token` returns `{ roomToken, livekitUrl,
+turnCredentials }`. Convert `turnCredentials` into the `iceServers` array the
+harness expects (`[{ urls: turnCredentials.uris, username: ..., credential:
+turnCredentials.password }]`).
+
+**3. Apply Russia-representative conditions to one tab's peer** (find its LAN
+IP first, e.g. via your router's client list or `arp -a`):
+
+```bash
+sudo ./scripts/network-emulation.sh eth0 <peer-ip> --delay 120 --jitter 30 --loss 4 --block-udp
+```
+
+The dashboard (`/auth/quality/dashboard`, paste in an access token) should
+start showing `relay` / `tls` for that peer within a few seconds — that's the
+UDP block forcing the TURN/TLS-443 fallback exactly as designed (§1 v5 fix).
+
+**4. Trigger a scripted outage mid-call:**
+
+```bash
+./scripts/toxiproxy-scenarios.sh cut 5
+```
+
+Watch the harness log an `Reconnecting -> Reconnected` cycle, and confirm the
+call didn't fully drop — that's the ICE-restart criterion from the done-bar.
+
+**5. Clean up:**
+
+```bash
+sudo ./scripts/network-emulation.sh eth0 <peer-ip> --clear
+./scripts/toxiproxy-scenarios.sh teardown
+docker compose -f docker-compose.yml -f docker-compose.testing.yml down
+```
 
 ## Repo layout
 
