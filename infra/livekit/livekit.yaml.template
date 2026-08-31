@@ -5,7 +5,16 @@ rtc:
   # Narrowed UDP relay range kept in sync with coturn's (§8).
   port_range_start: 20000
   port_range_end: 20100
-  use_external_ip: true
+  use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP}
+  # Defaults to true (correct once §1a's reachability decision is made and
+  # this is actually port-forwarded/tunneled). For same-machine local
+  # testing (nip.io, hosts-file entries, etc.), set
+  # LIVEKIT_USE_EXTERNAL_IP=false in .env instead -- with it true, LiveKit
+  # STUN-discovers what it thinks is your public IP and advertises that as
+  # the ICE candidate, which usually isn't reachable back to your own
+  # browser (most home routers don't support NAT hairpinning), so every
+  # local connection attempt fails ICE negotiation even though signaling
+  # succeeds and looks fine.
 
 redis:
   address: redis:6379
