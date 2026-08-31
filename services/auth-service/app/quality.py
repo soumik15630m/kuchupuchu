@@ -55,7 +55,7 @@ def recent_quality_reports(limit: int = 200) -> list[dict]:
                candidate_type, relay_protocol, rtt_ms, jitter_ms,
                packet_loss_pct, data_saver_on, audio_only
         FROM quality_reports
-        ORDER BY reported_at DESC
+        ORDER BY reported_at DESC, id DESC
         LIMIT ?
         """,
         (limit,),

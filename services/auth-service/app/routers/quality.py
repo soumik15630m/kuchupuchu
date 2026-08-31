@@ -1,48 +1,84 @@
 """§13 Phase 3 endpoints: quality-report ingest and the read-only dashboard.
 
-Auth posture matches devices.py's router: the same short-lived access
-token used everywhere else, not a separate credential. A client that can
-mint a room token can also report on the call it's about to join.
+Auth: uses `require_active_device` (app/auth_deps.py), the same strict
+check room.py uses -- a revoked device can't post or read quality data
+just because its old access token hasn't expired yet. This intentionally
+does NOT reuse devices.py's lighter check; quality data isn't the "explain
+why you're locked out" screen that exception exists for.
 """
+import time
+from collections import defaultdict, deque
+from typing import Literal
+
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from app.auth_deps import require_active_device
 from app.quality import record_quality_report, recent_quality_reports
-from app.session_tokens import verify_token
 
 router = APIRouter()
 
+# Basic per-device rate limit: the harness reports every 5s (see
+# testing/webrtc-harness/app.js's QUALITY_REPORT_INTERVAL_MS), so allowing
+# a handful per window comfortably covers normal use plus retries while
+# still bounding a buggy or malicious client's ability to flood SQLite.
+# In-memory and per-process is fine at this scale (§1's <=10-member cap,
+# single auth-service instance) -- would need a shared store (Redis, which
+# is already in the stack for LiveKit) if this ever runs multi-process.
+_RATE_LIMIT_WINDOW_SECONDS = 10
+_RATE_LIMIT_MAX_REPORTS = 5
+_report_timestamps: dict[str, deque] = defaultdict(deque)
 
-def _require_access_token(authorization: str | None) -> str:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="unauthorized")
-    token = authorization[len("Bearer ") :]
-    try:
-        payload = verify_token(token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="unauthorized")
-    if payload["type"] != "access":
-        raise HTTPException(status_code=401, detail="unauthorized")
-    return payload["sub"]
+
+def _reset_rate_limiter_state() -> None:
+    """Test-only hook -- the limiter is deliberately process-global state
+    (see module docstring on why in-memory is fine at this scale), which
+    means it leaks across test cases unless something resets it. Called
+    from tests/conftest.py's fresh_db fixture, not from any request path.
+    """
+    _report_timestamps.clear()
+
+
+def _check_rate_limit(device_id: str) -> None:
+    now = time.monotonic()
+    timestamps = _report_timestamps[device_id]
+    while timestamps and now - timestamps[0] > _RATE_LIMIT_WINDOW_SECONDS:
+        timestamps.popleft()
+    if len(timestamps) >= _RATE_LIMIT_MAX_REPORTS:
+        raise HTTPException(status_code=429, detail="too many quality reports, slow down")
+    timestamps.append(now)
 
 
 class QualityReportIn(BaseModel):
-    room_name: str
-    device_id: str
-    connection_quality: str | None = None
-    candidate_type: str | None = Field(default=None, description="host | srflx | relay")
-    relay_protocol: str | None = Field(default=None, description="udp | tcp | tls")
-    rtt_ms: float | None = None
-    jitter_ms: float | None = None
-    packet_loss_pct: float | None = None
+    # Bounded, not arbitrary strings -- matches RoomTokenBody's pattern in
+    # room.py (max_length=128) and keeps a buggy client from writing
+    # unbounded rows into SQLite.
+    room_name: str = Field(min_length=1, max_length=128)
+    device_id: str = Field(min_length=1, max_length=128)
+    connection_quality: Literal["excellent", "good", "poor"] | None = None
+    candidate_type: Literal["host", "srflx", "prflx", "relay"] | None = None
+    relay_protocol: Literal["udp", "tcp", "tls"] | None = None
+    # Sane physical bounds rather than unbounded floats -- a call's RTT
+    # isn't going to be negative or measured in hours.
+    rtt_ms: float | None = Field(default=None, ge=0, le=60_000)
+    jitter_ms: float | None = Field(default=None, ge=0, le=60_000)
+    packet_loss_pct: float | None = Field(default=None, ge=0, le=100)
     data_saver_on: bool = False
     audio_only: bool = False
 
 
 @router.post("/report")
 def report_quality(body: QualityReportIn, authorization: str | None = Header(default=None)):
-    _require_access_token(authorization)
+    email, token_device_id = require_active_device(authorization)
+    # The reported device_id must be the caller's own -- otherwise any
+    # active device could write quality rows attributed to someone else's
+    # device_id. Same ownership posture as devices.py's revoke endpoints.
+    if body.device_id != token_device_id:
+        raise HTTPException(status_code=403, detail="device_id must match the authenticated device")
+
+    _check_rate_limit(token_device_id)
+
     record_quality_report(
         room_name=body.room_name,
         device_id=body.device_id,
@@ -60,7 +96,7 @@ def report_quality(body: QualityReportIn, authorization: str | None = Header(def
 
 @router.get("/recent")
 def get_recent(authorization: str | None = Header(default=None)):
-    _require_access_token(authorization)
+    require_active_device(authorization)
     return {"reports": recent_quality_reports()}
 
 
