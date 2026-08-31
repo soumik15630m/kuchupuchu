@@ -6,6 +6,7 @@ import {
   Room,
   RoomEvent,
   VideoPresets,
+  VideoQuality,
   ConnectionQuality,
   Track,
 } from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
@@ -86,6 +87,22 @@ async function sampleStats() {
     if (stat.type === "transport" && stat.selectedCandidatePairId) {
       selectedPairId = stat.selectedCandidatePairId;
       break;
+    }
+  }
+  if (!selectedPairId) {
+    // Firefox doesn't emit a 'transport' stat with selectedCandidatePairId
+    // -- it marks the winning pair directly via candidate-pair's own
+    // 'selected' field (or 'nominated' + a succeeded state on older
+    // versions). Chrome's candidate-pair stats also carry these fields,
+    // so this fallback is harmless there too.
+    for (const stat of report.values()) {
+      if (
+        stat.type === "candidate-pair" &&
+        (stat.selected === true || (stat.nominated && stat.state === "succeeded"))
+      ) {
+        selectedPairId = stat.id;
+        break;
+      }
     }
   }
   if (!selectedPairId) return null;
@@ -210,7 +227,7 @@ async function setDataSaver(on) {
   for (const participant of room.remoteParticipants.values()) {
     for (const pub of participant.trackPublications.values()) {
       if (pub.kind === Track.Kind.Video && pub.setVideoQuality) {
-        pub.setVideoQuality(on ? 0 /* LOW */ : 2 /* HIGH */);
+        pub.setVideoQuality(on ? VideoQuality.LOW : VideoQuality.HIGH);
       }
     }
   }
