@@ -8,6 +8,8 @@ import {
   VideoPresets,
   VideoQuality,
   ConnectionQuality,
+  ConnectionState,
+  DisconnectReason,
   Track,
 } from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
 
@@ -136,6 +138,60 @@ async function sampleStats() {
 
 let lastQuality = null;
 
+// §13 Phase 3 stricter diagnostics: LiveKit's Disconnected event only
+// hands back a numeric DisconnectReason -- "disconnected: 2" told nobody
+// anything actionable. Map it to the name so DUPLICATE_IDENTITY vs.
+// PARTICIPANT_REMOVED vs. an actual ICE failure are distinguishable at a
+// glance instead of requiring a trip to livekit-client's source or the
+// server-side logs to decode.
+function disconnectReasonName(reason) {
+  if (reason == null) return "(none)";
+  const match = Object.entries(DisconnectReason).find(([, value]) => value === reason);
+  return match ? `${match[0]} (${reason})` : `UNKNOWN (${reason})`;
+}
+
+// §13 Phase 3 stricter diagnostics: opens a throwaway RTCPeerConnection
+// with the same ICE server list the real connection will use, and logs
+// every candidate type/protocol the browser can actually gather *before*
+// attempting room.connect() -- so "no reachable host/srflx candidate" or
+// "TURN/TLS unreachable" shows up immediately instead of manifesting 20+
+// seconds later as an opaque "could not establish pc connection".
+async function probeIceConnectivity(iceServers) {
+  if (!iceServers.length) {
+    log("ICE probe skipped: no ICE servers configured");
+    return;
+  }
+  log("probing ICE connectivity with configured servers...");
+  const pc = new RTCPeerConnection({ iceServers });
+  const seen = new Set();
+
+  await new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(), 4000);
+    pc.onicecandidate = (event) => {
+      if (!event.candidate) {
+        clearTimeout(timeout);
+        resolve();
+        return;
+      }
+      const c = event.candidate;
+      const key = `${c.type}/${c.protocol}${c.relayProtocol ? "/" + c.relayProtocol : ""}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        log(`  ICE candidate available: ${key}`);
+      }
+    };
+    pc.createDataChannel("probe");
+    pc.createOffer().then((offer) => pc.setLocalDescription(offer));
+  });
+
+  pc.close();
+  if (seen.size === 0) {
+    log("  WARNING: no ICE candidates gathered at all -- check network/firewall before connecting");
+  } else if (![...seen].some((k) => k.startsWith("relay"))) {
+    log("  note: no relay (TURN) candidates gathered -- fine if host/srflx succeed, but TURN/TLS fallback won't be available if they don't");
+  }
+}
+
 async function connect() {
   const url = document.getElementById("url").value.trim();
   const token = document.getElementById("token").value.trim();
@@ -145,6 +201,8 @@ async function connect() {
   } catch {
     log("ICE server list is not valid JSON, connecting without it");
   }
+
+  await probeIceConnectivity(iceServers);
 
   room = new Room({
     // §13 Phase 3: simulcast + Dynacast + adaptive stream.
@@ -172,6 +230,14 @@ async function connect() {
     }
   });
 
+  room.on(RoomEvent.ConnectionStateChanged, (state) => {
+    log("connection state:", state);
+    if (state === ConnectionState.Disconnected) {
+      log("  (if this followed a long silent wait, check: ICE probe output above, " +
+          "LIVEKIT_USE_EXTERNAL_IP in .env for local testing, and `docker compose logs livekit`)");
+    }
+  });
+
   room.on(RoomEvent.Reconnecting, () => log("reconnecting (ICE restart in progress)..."));
   room.on(RoomEvent.Reconnected, async () => {
     log("reconnected");
@@ -183,7 +249,7 @@ async function connect() {
       );
     }
   });
-  room.on(RoomEvent.Disconnected, (reason) => log("disconnected:", reason ?? ""));
+  room.on(RoomEvent.Disconnected, (reason) => log("disconnected:", disconnectReasonName(reason)));
 
   room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
     if (track.kind === Track.Kind.Video) {
@@ -194,7 +260,30 @@ async function connect() {
     }
   });
 
-  await room.connect(url, token);
+  const CONNECT_TIMEOUT_MS = 20000;
+  const startedAt = performance.now();
+  try {
+    await Promise.race([
+      room.connect(url, token),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`connect() did not resolve within ${CONNECT_TIMEOUT_MS}ms -- likely stuck in ICE gathering/checking`)),
+          CONNECT_TIMEOUT_MS
+        )
+      ),
+    ]);
+  } catch (err) {
+    // ConnectionError (livekit-client's own error type) carries .reason and
+    // .status beyond the generic message -- surface them when present
+    // instead of just err.message, which for ICE failures is often just
+    // "could not establish pc connection" with no further detail.
+    log(`connect failed: ${err.name ?? "Error"}: ${err.message}`);
+    if (err.reason !== undefined) log(`  reason: ${err.reason}`);
+    if (err.status !== undefined) log(`  status: ${err.status}`);
+    throw err;
+  }
+  log(`connect() resolved in ${Math.round(performance.now() - startedAt)}ms`);
+
   await room.localParticipant.enableCameraAndMicrophone();
   const localTrack = [...room.localParticipant.trackPublications.values()].find(
     (p) => p.kind === Track.Kind.Video

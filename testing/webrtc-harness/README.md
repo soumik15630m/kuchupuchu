@@ -44,6 +44,15 @@ Then open `http://localhost:8000`, paste in:
   extract the selected candidate pair's type (host/srflx/relay) and relay
   protocol (udp/tcp/tls), POSTing snapshots to `/auth/quality/report`.
   View them at `/auth/quality/dashboard`.
+- **Pre-connect ICE probe + stricter failure reporting** — before calling
+  `room.connect()`, gathers ICE candidates against the same server list
+  with a throwaway `RTCPeerConnection` and logs every type/protocol found,
+  so "no reachable candidates" shows up immediately instead of manifesting
+  90+ seconds later as an opaque "could not establish pc connection".
+  `Disconnected` events log the actual `DisconnectReason` name (not the
+  raw numeric code), `connect()` is wrapped with a timeout instead of
+  hanging silently, and connection errors surface `.reason`/`.status`
+  when present, not just the generic message.
 
 ## Validation strategy (§13 Phase 3, revised)
 
