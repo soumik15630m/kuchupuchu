@@ -106,6 +106,17 @@ curl -k https://localhost/healthz
 
 ## Phase 1 walkthrough: validate the whole path
 
+**Implemented** (`services/auth-service/`, `infra/livekit/`, `infra/nginx/`, `infra/coturn/`):
+- LiveKit SFU + Redis wired in, nginx's SNI stream-demux routing TURN/TLS-443
+  traffic to coturn and everything else to the app on the same port.
+- Bare-bones auth: allowlist + email OTP (`/otp/request`, `/otp/verify`) +
+  short-lived JWT access/refresh tokens, backed by SQLite.
+- Room token minting (`/room/token`) bundling both the LiveKit room token and
+  TURN credentials in one call.
+- §1a's reachability decision — port-forward vs. tunnel — is a per-deployment
+  choice (see "§1a's open decision" above), not something baked into the code;
+  either works with this stack once DNS/certs point at it.
+
 This exercises §13 Phase 1's "done when" bar — OTP login → JWT → LiveKit room
 token → an actual call. Steps 1-3 work on one machine; step 4 needs two, ideally
 on the real India/Russia link once §1a is resolved.
@@ -155,6 +166,20 @@ Repeat steps 1-4 with a second allowlisted email from a second device to get
 two participants in the same room — that's Phase 1's actual finish line.
 
 ## Phase 2 walkthrough: access control & revocation
+
+**Implemented** (`services/auth-service/app/devices.py` + `routers/devices.py`,
+migration `002_phase2_access_control.sql`):
+- Full device table (`active`/`revoked`/`expired`), a 2-devices-per-person cap
+  (§4), and per-device + per-person (`revoke-all`) revocation endpoints.
+- Synchronous `RemoveParticipant` teardown on revoke — awaited in the request
+  path, not backgrounded, so there's no window where a device is revoked in
+  the DB but still connected to a live call (§4 v5 fix).
+- Device-list version counter (`/devices/versions`) that bumps on every
+  revoke, standing in for a real push-based banner until Phase 5's
+  wake-service exists.
+- Web-identity heartbeat + auto-expiry sweep (hourly, `main.py`'s
+  `_expiry_sweep_loop`) for the web platform's weaker persistent-identity
+  story (§4).
 
 This exercises §13 Phase 2's "done when" bar — revoking a device that's mid-call
 disconnects it within a couple of seconds, and the other party sees a
