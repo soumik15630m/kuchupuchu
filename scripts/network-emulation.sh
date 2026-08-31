@@ -74,23 +74,69 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# A stable, short handle derived from the IP so multiple client-ip targets on
-# the same iface can each get their own class/filter without colliding.
-CLASS_ID="1:$(( (10#$(echo "$CLIENT_IP" | awk -F. '{print $4}')) + 100 ))"
+if ! ip link show "$IFACE" >/dev/null 2>&1; then
+    echo "Interface '${IFACE}' doesn't exist. Available interfaces:" >&2
+    ip -o link show | awk -F': ' '{print "  " $2}' >&2
+    exit 1
+fi
+
+# Class IDs are allocated from a per-interface state file, not derived from
+# the IP itself -- deriving from (say) the last octet collides whenever two
+# target IPs share a last octet across different subnets. This guarantees
+# uniqueness and keeps --clear finding the same class id that --apply used,
+# across separate invocations of this script.
+STATE_DIR="/var/run/netem-sim"
+STATE_FILE="${STATE_DIR}/${IFACE}.map"
+mkdir -p "$STATE_DIR"
+touch "$STATE_FILE"
+
+lookup_class_num() {
+    awk -v ip="$CLIENT_IP" '$1 == ip { print $2 }' "$STATE_FILE"
+}
+
+allocate_class_num() {
+    local existing
+    existing="$(lookup_class_num)"
+    if [ -n "$existing" ]; then
+        echo "$existing"
+        return
+    fi
+    local max_used next
+    max_used="$(awk '{print $2}' "$STATE_FILE" | sort -n | tail -1)"
+    next=$(( ${max_used:-99} + 1 ))
+    echo "${CLIENT_IP} ${next}" >> "$STATE_FILE"
+    echo "$next"
+}
+
+if [ "$CLEAR" -eq 1 ]; then
+    CLASS_NUM="$(lookup_class_num)"
+    if [ -z "$CLASS_NUM" ]; then
+        echo "No emulation state found for ${CLIENT_IP} on ${IFACE} (nothing to clear)." >&2
+        exit 0
+    fi
+else
+    CLASS_NUM="$(allocate_class_num)"
+fi
+
+CLASS_ID="1:${CLASS_NUM}"
+HANDLE_ID="${CLASS_NUM}0"
 COMMENT="netem-sim-${CLIENT_IP}"
 
 clear_rules() {
     echo "Clearing emulation rules for ${CLIENT_IP} on ${IFACE}..."
-    tc class del dev "$IFACE" classid "$CLASS_ID" 2>/dev/null || true
-    tc qdisc del dev "$IFACE" parent "$CLASS_ID" 2>/dev/null || true
     tc filter del dev "$IFACE" parent 1: protocol ip prio 1 \
         u32 match ip dst "$CLIENT_IP" flowid "$CLASS_ID" 2>/dev/null || true
+    tc qdisc del dev "$IFACE" parent "$CLASS_ID" handle "${HANDLE_ID}:" 2>/dev/null || true
+    tc class del dev "$IFACE" classid "$CLASS_ID" 2>/dev/null || true
     # If this was the last class under the root htb, tear the root down too.
     if ! tc class show dev "$IFACE" 2>/dev/null | grep -q "parent 1:"; then
         tc qdisc del dev "$IFACE" root 2>/dev/null || true
     fi
     while iptables -D OUTPUT -d "$CLIENT_IP" -p udp \
         --dport "$MEDIA_PORTS" -m comment --comment "$COMMENT" -j DROP 2>/dev/null; do :; done
+    # Drop this IP's line from the state file now that its rules are gone.
+    grep -v "^${CLIENT_IP} " "$STATE_FILE" > "${STATE_FILE}.tmp" 2>/dev/null || true
+    mv "${STATE_FILE}.tmp" "$STATE_FILE"
     echo "Done."
 }
 
@@ -99,7 +145,7 @@ if [ "$CLEAR" -eq 1 ]; then
     exit 0
 fi
 
-echo "Setting up asymmetric emulation for ${CLIENT_IP} on ${IFACE}:"
+echo "Setting up asymmetric emulation for ${CLIENT_IP} on ${IFACE} (class ${CLASS_ID}):"
 echo "  delay=${DELAY_MS}ms jitter=${JITTER_MS}ms loss=${LOSS_PCT}%"
 [ "$BLOCK_UDP" -eq 1 ] && echo "  blocking outbound UDP to ports ${MEDIA_PORTS} (forces TURN/TLS-443 fallback)"
 
@@ -111,10 +157,10 @@ tc qdisc show dev "$IFACE" root 2>/dev/null | grep -q htb || \
 tc class add dev "$IFACE" parent 1: classid "$CLASS_ID" htb rate 1000mbit 2>/dev/null || \
     tc class change dev "$IFACE" parent 1: classid "$CLASS_ID" htb rate 1000mbit
 
-tc qdisc add dev "$IFACE" parent "$CLASS_ID" handle "${CLASS_ID#1:}0:" netem \
+tc qdisc add dev "$IFACE" parent "$CLASS_ID" handle "${HANDLE_ID}:" netem \
     delay "${DELAY_MS}ms" "${JITTER_MS}ms" distribution normal \
     loss "${LOSS_PCT}%" 2>/dev/null || \
-    tc qdisc change dev "$IFACE" parent "$CLASS_ID" handle "${CLASS_ID#1:}0:" netem \
+    tc qdisc change dev "$IFACE" parent "$CLASS_ID" handle "${HANDLE_ID}:" netem \
     delay "${DELAY_MS}ms" "${JITTER_MS}ms" distribution normal \
     loss "${LOSS_PCT}%"
 
