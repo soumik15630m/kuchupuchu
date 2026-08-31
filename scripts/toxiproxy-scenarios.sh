@@ -58,12 +58,16 @@ case "$cmd" in
 
     restore)
         echo "Removing all active toxics on '${PROXY_NAME}'..."
-        curl -sf "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics" \
-            | grep -o '"name":"[^"]*"' | cut -d'"' -f4 \
-            | while read -r toxic; do
-                curl -sf -X DELETE "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics/${toxic}" > /dev/null
-                echo "  removed: ${toxic}"
-            done
+        toxics_json="$(curl -sf "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics")"
+        echo "$toxics_json" | python3 -c '
+import json, sys
+names = [t["name"] for t in json.load(sys.stdin)]
+print("\n".join(names))
+' | while read -r toxic; do
+            [ -z "$toxic" ] && continue
+            curl -sf -X DELETE "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics/${toxic}" > /dev/null
+            echo "  removed: ${toxic}"
+        done
         echo "Done."
         ;;
 
