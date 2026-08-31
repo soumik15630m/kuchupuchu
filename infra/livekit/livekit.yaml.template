@@ -15,6 +15,19 @@ rtc:
   # browser (most home routers don't support NAT hairpinning), so every
   # local connection attempt fails ICE negotiation even though signaling
   # succeeds and looks fine.
+  #
+  # With use_external_ip false, LiveKit instead advertises whatever it
+  # detects as its own local interface IP -- which under Docker is the
+  # container's bridge-network IP (e.g. 172.x.x.x). That's *also*
+  # unreachable from a host-machine browser on Docker Desktop (Windows/Mac),
+  # since the bridge network isn't routed to the host the way it is on
+  # native Linux. LIVEKIT_NODE_IP forces an explicit override that beats
+  # both STUN discovery and the internal-IP fallback -- for local testing,
+  # set it to 127.0.0.1 in .env, since docker-compose.yml already publishes
+  # LiveKit's TCP/UDP ports straight through to the host on the same port
+  # numbers. Left commented out (LIVEKIT_NODE_IP unset) for production,
+  # where use_external_ip's STUN discovery is what you actually want.
+{{LIVEKIT_NODE_IP_LINE}}
 
 redis:
   address: redis:6379
