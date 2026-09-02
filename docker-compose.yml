@@ -32,6 +32,17 @@ services:
       - ./certs:/etc/letsencrypt:ro
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
   livekit:
     build: ./infra/livekit
     env_file: .env
@@ -40,12 +51,6 @@ services:
       - "20000-20100:20000-20100/udp"
     depends_on:
       - redis
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis-data:/data
     restart: unless-stopped
 
   auth-service:

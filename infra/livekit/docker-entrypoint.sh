@@ -5,7 +5,7 @@ set -eu
 : "${LIVEKIT_NODE_IP:=}"
 export LIVEKIT_USE_EXTERNAL_IP
 
-envsubst '${LIVEKIT_API_KEY} ${LIVEKIT_API_SECRET} ${LIVEKIT_USE_EXTERNAL_IP}' \
+envsubst '${LIVEKIT_API_KEY} ${LIVEKIT_API_SECRET} ${LIVEKIT_USE_EXTERNAL_IP} ${REDIS_PASSWORD}' \
     < /etc/livekit/livekit.yaml.template > /etc/livekit/livekit.yaml
 
 # node_ip is only valid when it's a real IP -- an empty or malformed value

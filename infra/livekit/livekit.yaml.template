@@ -31,6 +31,7 @@ rtc:
 
 redis:
   address: redis:6379
+  password: ${REDIS_PASSWORD}
 
 keys:
   ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
