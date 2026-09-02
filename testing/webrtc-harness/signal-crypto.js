@@ -238,6 +238,11 @@ export async function initiateSession(myIdentity, theirBundle) {
   return {
     sharedSecret,
     associatedData,
+    // The Double Ratchet spec's reference integration reuses this exact
+    // DH term (EKa · SPKb) to bootstrap the first chain key -- see
+    // double-ratchet.js's initTransportChain -- so there's no reason to
+    // make the caller recompute it.
+    bootstrapDh: dh3,
     initialMessage: {
       identity_key: base64Encode(myIdentityKeyRaw),
       identity_dh_key: base64Encode(await exportRawPublicKey(myIdentity.dhIdentityKeyPair.publicKey)),
@@ -299,5 +304,5 @@ export async function respondToSession(myIdentity, initialMessage) {
   const myIdentityKeyRaw = await exportRawPublicKey(myIdentity.signingKeyPair.publicKey);
   const associatedData = concatBytes(base64Decode(initialMessage.identity_key), myIdentityKeyRaw);
 
-  return { sharedSecret, associatedData };
+  return { sharedSecret, associatedData, bootstrapDh: dh3 };
 }
