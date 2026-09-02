@@ -3,11 +3,12 @@
 Design doc: [`docs/design-doc-v6.md`](./docs/design-doc-v6.md) — read §1a (hosting), §3a (this
 repo's layout), and §13 (implementation phases) first.
 
-**Current status: Phase 3 (§13)** — call quality & Russia-path reliability, on top of
-Phase 1's SFU + minimal auth walking skeleton and Phase 2's access control/revocation.
-`wake-service`, `messaging-service`, and both real `clients/` are placeholders until
-Phase 5/6 — `testing/webrtc-harness/` is a throwaway browser harness standing in for
-them so Phase 3's features have somewhere to run.
+**Current status: Phase 3 (§13) done, validated 2026-09-02** — call quality &
+Russia-path reliability, on top of Phase 1's SFU + minimal auth walking skeleton
+and Phase 2's access control/revocation. Next up is Phase 4 (end-to-end
+encryption). `wake-service`, `messaging-service`, and both real `clients/` are
+placeholders until Phase 5/6 — `testing/webrtc-harness/` is a throwaway browser
+harness standing in for them so Phase 3's features had somewhere to run.
 
 ## Prerequisites
 
