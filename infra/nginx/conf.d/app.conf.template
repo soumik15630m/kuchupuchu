@@ -1,5 +1,12 @@
 # Reached only via the stream block's app_backend upstream (nginx.conf.template).
 # Listens on loopback 8443 — never exposed to the host directly.
+
+# Keyed on IP, applied to every /auth/ endpoint uniformly (M4/M10) rather
+# than each endpoint hand-rolling its own limiter -- OTP request/verify and
+# quality.py already rate-limit at the app layer; this is the IP-level
+# backstop nothing else in the stack provides.
+limit_req_zone $binary_remote_addr zone=auth_zone:10m rate=10r/s;
+
 server {
     listen 127.0.0.1:8443 ssl;
     http2 on;
@@ -7,6 +14,23 @@ server {
 
     ssl_certificate     /etc/letsencrypt/live/${PUBLIC_HOSTNAME}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${PUBLIC_HOSTNAME}/privkey.pem;
+
+    # Pinned rather than inheriting the base image's compiled OpenSSL
+    # defaults, which vary by image tag/patch level and aren't guaranteed
+    # to exclude TLS 1.0/1.1 or weak ciphers. Matches what coturn's own
+    # config already does (no-tlsv1/no-tlsv1_1).
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers on;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" always;
+
+    # Every payload this API accepts fits comfortably under this; a body
+    # over it is rejected by nginx before it's read into the app's memory.
+    client_max_body_size 16k;
 
     # LiveKit signaling (WSS) — SFU handles the actual media, this is just
     # the signaling/control-plane WebSocket.
@@ -22,6 +46,7 @@ server {
 
     # Auth service (OTP login, room-token minting — §4)
     location /auth/ {
+        limit_req zone=auth_zone burst=20 nodelay;
         proxy_pass http://auth-service:8080/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
