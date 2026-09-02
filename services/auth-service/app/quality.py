@@ -7,7 +7,14 @@ test calls) never justifies pre-aggregating in SQLite.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from app.db import get_db
+
+# Mirrors devices.py's WEB_HEARTBEAT_EXPIRY_DAYS sweep pattern -- this table
+# has no other retention mechanism and grows on every snapshot forever
+# otherwise (§13 addendum L10).
+RETENTION_DAYS = 30
 
 
 def record_quality_report(
@@ -61,3 +68,14 @@ def recent_quality_reports(limit: int = 200) -> list[dict]:
         (limit,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def prune_old_quality_reports() -> int:
+    """Deletes rows older than RETENTION_DAYS. Returns the number removed,
+    for logging. Run on a timer from main.py, same pattern as devices.py's
+    expire_stale_web_devices."""
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
+    cur = db.execute("DELETE FROM quality_reports WHERE reported_at < ?", (cutoff,))
+    db.commit()
+    return cur.rowcount

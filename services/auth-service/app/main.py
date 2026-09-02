@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import get_db
 from app.devices import expire_stale_web_devices
+from app.quality import prune_old_quality_reports
 from app.routers import auth as auth_router
 from app.routers import devices as devices_router
 from app.routers import quality as quality_router
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 # there's no request that would otherwise trigger the sweep. Once an hour
 # is frequent enough against a 14-day cutoff without adding meaningful load.
 EXPIRY_SWEEP_INTERVAL_SECONDS = 60 * 60
+
+# quality_reports has no other retention mechanism -- once real call volume
+# replaces test-harness volume this grows unbounded otherwise. Once a day
+# is plenty against a 30-day cutoff.
+QUALITY_RETENTION_SWEEP_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 async def _expiry_sweep_loop():
@@ -37,13 +43,28 @@ async def _expiry_sweep_loop():
         await asyncio.sleep(EXPIRY_SWEEP_INTERVAL_SECONDS)
 
 
+async def _quality_retention_sweep_loop():
+    while True:
+        try:
+            pruned = prune_old_quality_reports()
+            if pruned:
+                logger.info("quality_reports retention sweep: pruned %s rows", pruned)
+        except Exception:
+            logger.exception("quality_reports retention sweep failed")
+        await asyncio.sleep(QUALITY_RETENTION_SWEEP_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_expiry_sweep_loop())
+    tasks = [
+        asyncio.create_task(_expiry_sweep_loop()),
+        asyncio.create_task(_quality_retention_sweep_loop()),
+    ]
     try:
         yield
     finally:
-        task.cancel()
+        for task in tasks:
+            task.cancel()
 
 
 app = FastAPI(title="auth-service", version="0.2.0", lifespan=lifespan)
