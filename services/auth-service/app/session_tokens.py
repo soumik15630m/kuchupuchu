@@ -1,4 +1,5 @@
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Literal, TypedDict
 
@@ -23,6 +24,7 @@ class SessionPayload(TypedDict):
     sub: str  # email
     did: str  # device id (§4/§13 Phase 2) — lets revocation act on one device
     type: Literal["access", "refresh"]
+    jti: str  # refresh tokens only — rotation/reuse-detection id, see devices.refresh_jti
 
 
 def sign_access_token(email: str, device_id: str) -> str:
@@ -35,21 +37,31 @@ def sign_access_token(email: str, device_id: str) -> str:
     return jwt.encode(payload, _secret(), algorithm="HS256")
 
 
-def sign_refresh_token(email: str, device_id: str) -> str:
+def sign_refresh_token(email: str, device_id: str) -> tuple[str, str]:
+    """Returns (token, jti). The jti is the caller's responsibility to
+    persist as the device's current refresh_jti -- that's what makes
+    rotation real: a refresh token presented with any other jti was
+    already rotated away from and gets treated as reuse, not honored."""
+    jti = secrets.token_hex(16)
     payload = {
         "sub": email,
         "did": device_id,
         "type": "refresh",
+        "jti": jti,
         "exp": datetime.now(timezone.utc) + timedelta(days=REFRESH_TTL_DAYS),
     }
-    return jwt.encode(payload, _secret(), algorithm="HS256")
+    return jwt.encode(payload, _secret(), algorithm="HS256"), jti
 
 
 def verify_token(token: str) -> SessionPayload:
     payload = jwt.decode(token, _secret(), algorithms=["HS256"])
-    # "did" didn't exist on tokens minted before Phase 2. Rather than hard
-    # 401ing every session issued under Phase 1 the moment this ships,
-    # surface it as an empty device id -- callers that require device-level
-    # checks (room token minting, refresh) reject that themselves, but it
-    # fails there with a clear cause instead of a raw KeyError here.
-    return {"sub": payload["sub"], "did": payload.get("did", ""), "type": payload["type"]}
+    # "did"/"jti" didn't exist on tokens minted before Phase 2/this rotation
+    # fix. Rather than hard 401ing every outstanding session the moment this
+    # ships, surface them as empty -- callers that require device/jti checks
+    # reject those themselves, with a clear cause instead of a raw KeyError.
+    return {
+        "sub": payload["sub"],
+        "did": payload.get("did", ""),
+        "type": payload["type"],
+        "jti": payload.get("jti", ""),
+    }

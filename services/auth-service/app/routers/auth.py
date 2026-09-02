@@ -7,8 +7,11 @@ from app.devices import (
     DeviceLimitReachedError,
     DeviceNotFoundError,
     DeviceRevokedError,
+    get_device,
     is_device_active,
     register_or_touch_device,
+    revoke_all_devices,
+    set_refresh_jti,
     touch_heartbeat,
 )
 from app.mailer import send_otp_email
@@ -79,9 +82,11 @@ def otp_verify(body: OtpVerifyBody):
         # app/devices.py's register_or_touch_device docstring.
         raise HTTPException(status_code=409, detail="device id already in use")
 
+    refresh_token, jti = sign_refresh_token(normalized_email, body.deviceId)
+    set_refresh_jti(body.deviceId, jti)
     return {
         "accessToken": sign_access_token(normalized_email, body.deviceId),
-        "refreshToken": sign_refresh_token(normalized_email, body.deviceId),
+        "refreshToken": refresh_token,
     }
 
 
@@ -102,13 +107,30 @@ def token_refresh(body: RefreshBody):
     if not device_id or not is_device_active(device_id, email):
         raise HTTPException(status_code=401, detail="device revoked or expired; log in again")
 
+    # §4 refresh-token rotation: a device only ever has one valid refresh
+    # token at a time. A token whose jti doesn't match the one on record was
+    # already rotated away from on a prior refresh -- presenting it again
+    # means it leaked, so the whole family gets killed rather than honored.
+    # `refresh_jti` is unset for sessions issued before this check existed;
+    # those get one free pass through, same backward-compat posture as the
+    # "did" field before it.
+    device = get_device(device_id)
+    stored_jti = device["refresh_jti"] if device else None
+    if stored_jti and payload["jti"] != stored_jti:
+        revoke_all_devices(email)
+        raise HTTPException(
+            status_code=401,
+            detail="refresh token reuse detected; all devices revoked, log in again",
+        )
+
     # §4 web-identity heartbeat: "piggybacked on the existing 15-minute
     # token refresh, no new traffic." Harmless no-op for Android devices,
     # which don't need it, but there's no reason to special-case them out.
     touch_heartbeat(device_id)
 
-    # §4: refresh token rotated on every use.
+    new_refresh_token, new_jti = sign_refresh_token(email, device_id)
+    set_refresh_jti(device_id, new_jti)
     return {
         "accessToken": sign_access_token(email, device_id),
-        "refreshToken": sign_refresh_token(email, device_id),
+        "refreshToken": new_refresh_token,
     }

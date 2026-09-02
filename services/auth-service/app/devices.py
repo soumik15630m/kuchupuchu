@@ -169,6 +169,16 @@ def register_or_touch_device(email: str, device_id: str, platform: str) -> str:
     return "active"
 
 
+def set_refresh_jti(device_id: str, jti: str) -> None:
+    """Records `jti` as the only refresh token currently valid for this
+    device (§4 refresh-token rotation). Called on login and on every
+    successful refresh -- routers/auth.py rejects a refresh token whose
+    jti doesn't match this as reuse of an already-rotated-away token."""
+    db = get_db()
+    db.execute("UPDATE devices SET refresh_jti = ? WHERE id = ?", (jti, device_id))
+    db.commit()
+
+
 def touch_heartbeat(device_id: str) -> None:
     """Piggybacked on the 15-minute token refresh (§4) -- no separate
     endpoint/traffic. Silently no-ops for an unknown device id; the caller
