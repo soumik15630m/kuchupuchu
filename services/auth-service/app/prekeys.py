@@ -84,6 +84,48 @@ def get_identity_key(device_id: str) -> str | None:
     return row["public_key"] if row else None
 
 
+def get_identity_dh_key(device_id: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT public_key, signature FROM identity_dh_keys WHERE device_id = ?", (device_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def upload_identity_dh_key(device_id: str, public_key_b64: str, signature_b64: str) -> None:
+    """Same verify-then-store shape as `upload_signed_prekey`, against the
+    same Ed25519 identity key -- see 005_phase4_identity_dh_key.sql for
+    why this is a second key rather than reusing the Ed25519 one for DH.
+    Idempotent for a byte-identical re-upload; rejects a genuine change,
+    same posture as the Ed25519 identity key itself."""
+    identity_key_b64 = get_identity_key(device_id)
+    if identity_key_b64 is None:
+        raise NoIdentityKeyError(device_id)
+
+    public_key_bytes = validate_x25519_public_key(public_key_b64)
+    signature_bytes = validate_signature(signature_b64)
+    identity_key_bytes = base64.b64decode(identity_key_b64)
+
+    verifier = Ed25519PublicKey.from_public_bytes(identity_key_bytes)
+    try:
+        verifier.verify(signature_bytes, public_key_bytes)
+    except InvalidSignature as exc:
+        raise InvalidPrekeySignatureError(device_id) from exc
+
+    existing = get_identity_dh_key(device_id)
+    if existing is not None:
+        if existing["public_key"] == public_key_b64 and existing["signature"] == signature_b64:
+            return
+        raise IdentityKeyMismatchError(device_id)
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO identity_dh_keys (device_id, public_key, signature) VALUES (?, ?, ?)",
+        (device_id, public_key_b64, signature_b64),
+    )
+    db.commit()
+
+
 def upload_identity_key(device_id: str, email: str, public_key_b64: str) -> None:
     """Publishes a device's identity key. Idempotent for a matching
     re-upload (a client that restarts and re-runs its setup path
@@ -230,17 +272,24 @@ def get_bundle(device_id: str) -> dict | None:
     identity_row = db.execute(
         "SELECT public_key FROM identity_keys WHERE device_id = ?", (device_id,)
     ).fetchone()
+    identity_dh_row = db.execute(
+        "SELECT public_key, signature FROM identity_dh_keys WHERE device_id = ?", (device_id,)
+    ).fetchone()
     signed_row = db.execute(
         "SELECT key_id, public_key, signature FROM signed_prekeys WHERE device_id = ?",
         (device_id,),
     ).fetchone()
-    if identity_row is None or signed_row is None:
+    if identity_row is None or identity_dh_row is None or signed_row is None:
         return None
 
     one_time = _consume_one_time_prekey(device_id)
 
     return {
         "identity_key": identity_row["public_key"],
+        "identity_dh_key": {
+            "public_key": identity_dh_row["public_key"],
+            "signature": identity_dh_row["signature"],
+        },
         "signed_prekey": {
             "key_id": signed_row["key_id"],
             "public_key": signed_row["public_key"],

@@ -19,6 +19,7 @@ from app.prekeys import (
     add_one_time_prekeys,
     get_bundle,
     unused_one_time_prekey_count,
+    upload_identity_dh_key,
     upload_identity_key,
     upload_signed_prekey,
     validate_identity_key,
@@ -35,6 +36,23 @@ def _b64_field(*, description: str) -> Field:
     # validators, called below. This just keeps pydantic from accepting
     # something absurdly oversized before it gets that far.
     return Field(min_length=1, max_length=256, description=description)
+
+
+class IdentityDhKeyIn(BaseModel):
+    public_key: str = _b64_field(description="base64 X25519 identity-agreement public key")
+    signature: str = _b64_field(description="base64 Ed25519 signature over public_key, by identity_key")
+
+    @field_validator("public_key")
+    @classmethod
+    def _check_public_key(cls, v: str) -> str:
+        validate_x25519_public_key(v)
+        return v
+
+    @field_validator("signature")
+    @classmethod
+    def _check_signature(cls, v: str) -> str:
+        validate_signature(v)
+        return v
 
 
 class SignedPrekeyIn(BaseModel):
@@ -68,6 +86,7 @@ class OneTimePrekeyIn(BaseModel):
 
 class PublishBundleIn(BaseModel):
     identity_key: str = _b64_field(description="base64 Ed25519 public key")
+    identity_dh_key: IdentityDhKeyIn
     signed_prekey: SignedPrekeyIn
     # Optional -- a device topping up its pool after most of its earlier
     # batch got consumed doesn't need to re-send identity_key/signed_prekey.
@@ -90,6 +109,18 @@ def publish_bundle(body: PublishBundleIn, authorization: str | None = Header(def
         raise HTTPException(
             status_code=409,
             detail="identity key already on file and does not match; rotate by re-provisioning the device instead",
+        )
+
+    try:
+        upload_identity_dh_key(device_id, body.identity_dh_key.public_key, body.identity_dh_key.signature)
+    except NoIdentityKeyError:
+        raise HTTPException(status_code=500, detail="identity key upload did not persist")
+    except InvalidPrekeySignatureError:
+        raise HTTPException(status_code=400, detail="identity_dh_key signature does not verify against identity_key")
+    except IdentityKeyMismatchError:
+        raise HTTPException(
+            status_code=409,
+            detail="identity_dh_key already on file and does not match; rotate by re-provisioning the device instead",
         )
 
     try:
