@@ -14,6 +14,7 @@ wherever it's found. At this app's scale (<=10 members, <=5 participants
 per room, a handful of rooms at most) that's a handful of API calls, not a
 real cost.
 """
+import asyncio
 import logging
 import os
 
@@ -60,7 +61,6 @@ async def remove_participant_everywhere(identity: str) -> bool:
         )
         return False
 
-    removed_from_any = False
     async with LiveKitAPI(url, api_key, api_secret) as lk:
         try:
             rooms = await lk.room.list_rooms(ListRoomsRequest(names=[]))
@@ -68,27 +68,34 @@ async def remove_participant_everywhere(identity: str) -> bool:
             logger.warning("list_rooms failed during revoke teardown for %s: %s", identity, e)
             return False
 
-        for room in rooms.rooms:
-            try:
-                participants = await lk.room.list_participants(
-                    ListParticipantsRequest(room=room.name)
-                )
-            except _LIVEKIT_UNAVAILABLE_ERRORS as e:
-                logger.warning("list_participants(%s) failed: %s", room.name, e)
-                continue
+        # Fanned out, not a sequential loop: under a degraded (slow, not
+        # dead) LiveKit, awaiting each room's calls one at a time makes
+        # worst-case latency scale with room count, entirely inside the
+        # revoke request the caller is blocked on. Concurrent calls bound
+        # that back down to roughly one timeout regardless of room count.
+        results = await asyncio.gather(
+            *(_remove_from_room(lk, room.name, identity) for room in rooms.rooms)
+        )
 
-            if not any(p.identity == identity for p in participants.participants):
-                continue
+    return any(results)
 
-            try:
-                await lk.room.remove_participant(
-                    RoomParticipantIdentity(room=room.name, identity=identity)
-                )
-                removed_from_any = True
-                logger.info("revoke: removed %s from live room %s", identity, room.name)
-            except _LIVEKIT_UNAVAILABLE_ERRORS as e:
-                logger.warning(
-                    "remove_participant(%s, %s) failed: %s", room.name, identity, e
-                )
 
-    return removed_from_any
+async def _remove_from_room(lk: LiveKitAPI, room_name: str, identity: str) -> bool:
+    try:
+        participants = await lk.room.list_participants(ListParticipantsRequest(room=room_name))
+    except _LIVEKIT_UNAVAILABLE_ERRORS as e:
+        logger.warning("list_participants(%s) failed: %s", room_name, e)
+        return False
+
+    if not any(p.identity == identity for p in participants.participants):
+        return False
+
+    try:
+        await lk.room.remove_participant(
+            RoomParticipantIdentity(room=room_name, identity=identity)
+        )
+        logger.info("revoke: removed %s from live room %s", identity, room_name)
+        return True
+    except _LIVEKIT_UNAVAILABLE_ERRORS as e:
+        logger.warning("remove_participant(%s, %s) failed: %s", room_name, identity, e)
+        return False
