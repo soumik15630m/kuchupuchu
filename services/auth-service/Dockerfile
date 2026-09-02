@@ -8,5 +8,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY migrations ./migrations
 
+RUN useradd --system --no-create-home --uid 10001 appuser \
+    && chown -R appuser /app \
+    && mkdir -p /data && chown appuser /data
+USER appuser
+
 EXPOSE 8080
 CMD ["sh", "-c", "python -m app.migrate && uvicorn app.main:app --host 0.0.0.0 --port ${AUTH_PORT:-8080}"]

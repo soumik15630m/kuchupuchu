@@ -1,5 +1,10 @@
 worker_processes auto;
 
+# Master process needs root only to bind the privileged ports below (443,
+# 3478/tcp via the stream demux); every actual request is handled by a
+# worker running as this unprivileged user.
+user nginx;
+
 events {
     worker_connections 1024;
 }
