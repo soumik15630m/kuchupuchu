@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -107,7 +108,7 @@ def verify_otp(email: str, submitted_code: str) -> None:
     if datetime.fromisoformat(row["expires_at"]) < _now():
         raise OtpExpiredError("OTP expired; request a new code")
 
-    if _hash_code(submitted_code) != row["code_hash"]:
+    if not hmac.compare_digest(_hash_code(submitted_code), row["code_hash"]):
         db.execute("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?", (row["id"],))
         db.commit()
         raise InvalidOtpError("incorrect code")

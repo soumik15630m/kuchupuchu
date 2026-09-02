@@ -1,13 +1,17 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+import aiohttp
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
+from app.db import get_db
 from app.devices import expire_stale_web_devices
 from app.routers import auth as auth_router
 from app.routers import devices as devices_router
@@ -46,8 +50,36 @@ app = FastAPI(title="auth-service", version="0.2.0", lifespan=lifespan)
 
 
 @app.get("/healthz")
-def healthz():
-    return {"status": "ok"}
+async def healthz():
+    # A static "ok" doesn't mean the app can actually serve a login --
+    # check the dependencies OTP/token issuance actually needs.
+    checks = {"sqlite": False, "livekit": False}
+
+    try:
+        get_db().execute("SELECT 1")
+        checks["sqlite"] = True
+    except Exception:
+        logger.exception("healthz: sqlite check failed")
+
+    livekit_url = os.environ.get("LIVEKIT_INTERNAL_URL")
+    if livekit_url:
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=2)
+            ) as session:
+                async with session.get(f"{livekit_url}/") as resp:
+                    # LiveKit's HTTP port answers (any status) as long as
+                    # the process is up -- this isn't an authenticated
+                    # admin call, just a reachability probe.
+                    checks["livekit"] = resp.status < 500
+        except Exception:
+            logger.exception("healthz: livekit check failed")
+
+    healthy = all(checks.values())
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content={"status": "ok" if healthy else "degraded", "checks": checks},
+    )
 
 
 # Mounted at "/", "/room", and "/devices" here; nginx strips the "/auth/"
