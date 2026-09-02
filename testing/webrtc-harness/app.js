@@ -1,8 +1,9 @@
 // §13 Phase 3 test harness logic. Not a Phase 5 client — see README.
 //
-// Loaded as an ES module; pulls the LiveKit client SDK from a CDN so this
-// harness needs no build step.
-import {
+// LiveKit's client SDK loads from a pinned CDN <script> in index.html
+// (UMD build, global `LivekitClient`) with an SRI hash, so this harness
+// still needs no build step and no vendored copy to keep updated.
+const {
   Room,
   RoomEvent,
   VideoPresets,
@@ -11,7 +12,7 @@ import {
   ConnectionState,
   DisconnectReason,
   Track,
-} from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
+} = LivekitClient;
 
 const logEl = document.getElementById("log");
 function log(...parts) {

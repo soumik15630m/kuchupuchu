@@ -40,6 +40,19 @@
 
 <div id="log"></div>
 
-<script type="module" src="app.js"></script>
+<!-- Pinned to an exact version, not the "@2" range app.js used before: SRI
+     needs a byte-exact match, and an unpinned major would resolve to a
+     different (newer) file the moment jsdelivr's cache picks up a new
+     release, silently breaking the hash below. Loaded as a classic script
+     (UMD build, global `LivekitClient`) rather than app.js's previous ESM
+     `import` -- browsers don't support `integrity` on module imports at
+     all, only on <script>/<link> elements. -->
+<script
+  src="https://cdn.jsdelivr.net/npm/livekit-client@2.22.2/dist/livekit-client.umd.js"
+  integrity="sha384-Da4w9j5FQHT/FLn53mwLM7Zyp4USWSpMqBu/nbismxL78DcZMp7eC6rqPjnVATfq"
+  crossorigin="anonymous"
+  defer
+></script>
+<script src="app.js" defer></script>
 </body>
 </html>
