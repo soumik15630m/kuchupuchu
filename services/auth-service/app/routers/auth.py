@@ -1,5 +1,6 @@
 from typing import Literal
 
+import jwt
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 
@@ -94,7 +95,7 @@ def otp_verify(body: OtpVerifyBody):
 def token_refresh(body: RefreshBody):
     try:
         payload = verify_token(body.refreshToken)
-    except Exception:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="invalid or expired refresh token")
 
     if payload["type"] != "refresh":

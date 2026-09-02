@@ -13,6 +13,7 @@ not an oversight of this pass.
 """
 from fastapi import APIRouter, Header, HTTPException
 
+from app.auth_deps import parse_access_token
 from app.devices import (
     DeviceNotFoundError,
     NotDeviceOwnerError,
@@ -22,29 +23,19 @@ from app.devices import (
     revoke_device,
 )
 from app.livekit_admin import remove_participant_everywhere
-from app.session_tokens import verify_token
 
 router = APIRouter()
 
 
 def _require_access_token(authorization: str | None) -> str:
-    """Same shape as room.py's, deliberately not shared: this router only
-    ever needs the email, and importing across routers for one helper
-    isn't worth the coupling. Notably does NOT re-check device status here
-    — a device revoking itself, or listing devices after being revoked
-    elsewhere, should still work rather than 401ing the person out of the
-    one screen that would explain why they're locked out.
+    """Only the email, no device-status check -- a device revoking itself,
+    or listing devices after being revoked elsewhere, should still work
+    rather than 401ing the person out of the one screen that would explain
+    why they're locked out. Shares the actual token-parsing/verification
+    path with auth_deps.require_active_device via parse_access_token; only
+    this device-status check is intentionally skipped.
     """
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="unauthorized")
-    token = authorization[len("Bearer ") :]
-    try:
-        payload = verify_token(token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="unauthorized")
-    if payload["type"] != "access":
-        raise HTTPException(status_code=401, detail="unauthorized")
-    return payload["sub"]
+    return parse_access_token(authorization)["sub"]
 
 
 @router.get("/me")
