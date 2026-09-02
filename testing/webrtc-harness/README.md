@@ -63,3 +63,27 @@ local docker-compose stack, with `scripts/network-emulation.sh` and
 conditions (latency/jitter/loss, simulated DPI UDP-blocking, and scripted
 TURN/TLS-path cuts) instead of waiting on the real link or the counterparty's
 availability. See design-doc-v6.md §13 Phase 3 for the exact done-bar.
+
+## Phase 4: end-to-end encryption
+
+`signal-crypto.js` implements X3DH key agreement (identity generation,
+bundle publish/fetch payloads, initiator/responder session establishment)
+directly on WebCrypto's X25519/Ed25519/HKDF primitives -- see the
+module's own header comment for why that's the right call here instead
+of reaching for a third-party library. `double-ratchet.js` builds the
+symmetric-ratchet key derivation on top of that shared secret.
+
+Both are plain ES modules with no build step, same as `app.js`, and both
+have real unit tests runnable under Node (which has its own compatible
+WebCrypto implementation, so these exercise the actual code path rather
+than a mock):
+
+```
+cd testing/webrtc-harness
+node --test test/*.test.mjs
+```
+
+`assertSecureCurvesSupported()` in `signal-crypto.js` fails loudly if a
+browser doesn't support WebCrypto X25519/Ed25519 -- check that before
+relying on E2EE working in a given browser.
+
