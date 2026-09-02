@@ -10,6 +10,21 @@ encryption). `wake-service`, `messaging-service`, and both real `clients/` are
 placeholders until Phase 5/6 — `testing/webrtc-harness/` is a throwaway browser
 harness standing in for them so Phase 3's features had somewhere to run.
 
+## Dependencies
+
+`services/auth-service/requirements*.txt` are hash-locked (`pip-compile
+--generate-hashes`), generated from `requirements*.in`. To bump or add a
+dependency, edit the `.in` file and regenerate:
+
+```bash
+pip install pip-tools
+pip-compile --generate-hashes --output-file=requirements.txt requirements.in
+pip-compile --generate-hashes --output-file=requirements-dev.txt requirements-dev.in
+```
+
+Don't hand-edit the `.txt` files — the hashes won't match a manually
+bumped version pin, and `pip install` will refuse to proceed.
+
 ## Prerequisites
 
 - Docker + Docker Compose
