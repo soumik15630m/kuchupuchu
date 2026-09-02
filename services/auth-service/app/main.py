@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import get_db
 from app.devices import expire_stale_web_devices
+from app.livekit_admin import close_client, init_client
 from app.quality import prune_old_quality_reports
 from app.routers import auth as auth_router
 from app.routers import devices as devices_router
@@ -56,6 +57,7 @@ async def _quality_retention_sweep_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_client()
     tasks = [
         asyncio.create_task(_expiry_sweep_loop()),
         asyncio.create_task(_quality_retention_sweep_loop()),
@@ -65,6 +67,7 @@ async def lifespan(app: FastAPI):
     finally:
         for task in tasks:
             task.cancel()
+        await close_client()
 
 
 app = FastAPI(title="auth-service", version="0.2.0", lifespan=lifespan)
