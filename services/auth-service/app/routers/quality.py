@@ -138,12 +138,25 @@ async function load() {
   for (const r of reports) {
     const qClass = (r.connection_quality || '').toLowerCase();
     const row = document.createElement('tr');
-    row.innerHTML = `<td>${r.reported_at}</td><td>${r.room_name}</td><td>${r.device_id}</td>
-      <td class="${qClass}">${r.connection_quality ?? ''}</td>
-      <td class="${r.candidate_type === 'relay' ? 'relay' : ''}">${r.candidate_type ?? ''}</td>
-      <td>${r.relay_protocol ?? ''}</td><td>${r.rtt_ms ?? ''}</td>
-      <td>${r.jitter_ms ?? ''}</td><td>${r.packet_loss_pct ?? ''}</td>
-      <td>${r.data_saver_on ? 'on' : ''}</td><td>${r.audio_only ? 'on' : ''}</td>`;
+    const cell = (text, className) => {
+      const td = document.createElement('td');
+      if (className) td.className = className;
+      td.textContent = text ?? '';
+      return td;
+    };
+    row.append(
+      cell(r.reported_at),
+      cell(r.room_name),
+      cell(r.device_id),
+      cell(r.connection_quality, qClass),
+      cell(r.candidate_type, r.candidate_type === 'relay' ? 'relay' : ''),
+      cell(r.relay_protocol),
+      cell(r.rtt_ms),
+      cell(r.jitter_ms),
+      cell(r.packet_loss_pct),
+      cell(r.data_saver_on ? 'on' : ''),
+      cell(r.audio_only ? 'on' : ''),
+    );
     body.appendChild(row);
   }
 }
