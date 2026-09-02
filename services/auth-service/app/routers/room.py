@@ -19,5 +19,5 @@ def room_token(body: RoomTokenBody, authorization: str | None = Header(default=N
     return {
         "roomToken": mint_room_token(device_id, email, body.roomName),
         "livekitUrl": os.environ.get("LIVEKIT_URL"),
-        "turnCredentials": mint_turn_credentials(email),
+        "turnCredentials": mint_turn_credentials(device_id),
     }

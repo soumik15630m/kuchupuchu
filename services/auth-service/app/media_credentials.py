@@ -39,14 +39,19 @@ def mint_room_token(device_id: str, email: str, room_name: str) -> str:
     return token.to_jwt()
 
 
-def mint_turn_credentials(email: str) -> dict:
+def mint_turn_credentials(device_id: str) -> dict:
     """Time-limited TURN REST-API credentials for coturn (§7.1), matching
     the `use-auth-secret` scheme configured in turnserver.conf.template.
-    username = "<expiry-unix-ts>:<email>", password = HMAC-SHA1(username, secret), base64."""
+    username = "<expiry-unix-ts>:<device_id>", password = HMAC-SHA1(username, secret), base64.
+    Device-scoped, not email-scoped, matching every other identity boundary
+    in this codebase (LiveKit participant identity, quality-report
+    attribution, the device table itself) -- avoids leaking the caller's
+    email into their own browser's webrtc-internals and coturn's access logs.
+    """
     secret = os.environ["TURN_SHARED_SECRET"]
     ttl_seconds = 600  # 10 min — same order as the room token above
     expiry = int(time.time()) + ttl_seconds
-    username = f"{expiry}:{email}"
+    username = f"{expiry}:{device_id}"
     password = base64.b64encode(
         hmac.new(secret.encode(), username.encode(), hashlib.sha1).digest()
     ).decode()
