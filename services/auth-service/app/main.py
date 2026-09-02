@@ -25,6 +25,7 @@ from app.metrics import http_request_duration_seconds, http_requests_total
 from app.quality import prune_old_quality_reports
 from app.routers import auth as auth_router
 from app.routers import devices as devices_router
+from app.routers import prekeys as prekeys_router
 from app.routers import quality as quality_router
 from app.routers import room as room_router
 
@@ -163,3 +164,4 @@ app.include_router(auth_router.router)
 app.include_router(room_router.router, prefix="/room")
 app.include_router(devices_router.router, prefix="/devices")
 app.include_router(quality_router.router, prefix="/quality")
+app.include_router(prekeys_router.router, prefix="/prekeys")
