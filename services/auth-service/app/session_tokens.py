@@ -9,12 +9,13 @@ REFRESH_TTL_DAYS = int(os.environ.get("JWT_REFRESH_TOKEN_TTL_DAYS", "30"))
 
 
 def _secret() -> str:
-    # Reused as the app's JWT signing secret for now; split into its own
-    # JWT_SECRET before this leaves Phase 1 if the two ever need to rotate
-    # independently.
-    s = os.environ.get("LIVEKIT_API_SECRET")
+    # Own trust domain, separate from LIVEKIT_API_SECRET (which authenticates
+    # server-to-LiveKit admin calls and room-token minting). Session JWTs and
+    # LiveKit admin credentials must never share a key -- a leak of one must
+    # not also leak the other.
+    s = os.environ.get("JWT_SECRET")
     if not s:
-        raise RuntimeError("Missing signing secret (LIVEKIT_API_SECRET)")
+        raise RuntimeError("Missing signing secret (JWT_SECRET)")
     return s
 
 

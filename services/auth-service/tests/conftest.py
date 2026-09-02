@@ -16,6 +16,7 @@ os.environ.setdefault("SQLITE_PATH", ":memory:")
 os.environ.setdefault("LIVEKIT_API_KEY", "test-key")
 os.environ.setdefault("LIVEKIT_API_SECRET", "test-secret-not-for-prod")
 os.environ.setdefault("LIVEKIT_URL", "wss://test.invalid")
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-not-for-prod")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

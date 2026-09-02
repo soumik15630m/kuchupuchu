@@ -23,7 +23,8 @@ harness standing in for them so Phase 3's features had somewhere to run.
 cp .env.example .env
 # edit .env: set PUBLIC_HOSTNAME and TURN_HOSTNAME (two DIFFERENT hostnames —
 # see the comment above TURN_HOSTNAME in .env.example for why), and generate
-# real secrets for LIVEKIT_API_SECRET / TURN_SHARED_SECRET, e.g.:
+# real secrets for LIVEKIT_API_SECRET / TURN_SHARED_SECRET / JWT_SECRET
+# (three independent values, not the same one reused), e.g.:
 openssl rand -hex 32
 ```
 
