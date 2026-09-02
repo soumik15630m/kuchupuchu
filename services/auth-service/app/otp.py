@@ -52,25 +52,32 @@ def request_otp(email: str) -> str:
         raise NotAllowlistedError(f"{normalized} is not on the allowlist")
 
     db = get_db()
-    one_hour_ago = (_now() - timedelta(hours=1)).isoformat()
-    recent = db.execute(
-        "SELECT COUNT(*) as n FROM otp_codes WHERE email = ? AND created_at > ?",
-        (normalized, one_hour_ago),
-    ).fetchone()
+    # BEGIN IMMEDIATE closes the same class of race as devices.py's
+    # register_or_touch_device: without it, two concurrent requests can
+    # both read a count under MAX_REQUESTS_PER_HOUR before either commits.
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        one_hour_ago = (_now() - timedelta(hours=1)).isoformat()
+        recent = db.execute(
+            "SELECT COUNT(*) as n FROM otp_codes WHERE email = ? AND created_at > ?",
+            (normalized, one_hour_ago),
+        ).fetchone()
 
-    if recent["n"] >= MAX_REQUESTS_PER_HOUR:
-        raise RateLimitedError(f"{normalized} has requested {recent['n']} OTPs in the last hour")
+        if recent["n"] >= MAX_REQUESTS_PER_HOUR:
+            raise RateLimitedError(f"{normalized} has requested {recent['n']} OTPs in the last hour")
 
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    expires_at = (_now() + timedelta(minutes=OTP_TTL_MIN)).isoformat()
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        expires_at = (_now() + timedelta(minutes=OTP_TTL_MIN)).isoformat()
 
-    db.execute(
-        "INSERT INTO otp_codes (email, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
-        (normalized, _hash_code(code), expires_at, _now().isoformat()),
-    )
-    db.commit()
-
-    return code
+        db.execute(
+            "INSERT INTO otp_codes (email, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            (normalized, _hash_code(code), expires_at, _now().isoformat()),
+        )
+        db.commit()
+        return code
+    except Exception:
+        db.rollback()
+        raise
 
 
 def verify_otp(email: str, submitted_code: str) -> None:

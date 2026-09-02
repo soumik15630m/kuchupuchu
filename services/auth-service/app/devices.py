@@ -119,54 +119,64 @@ def register_or_touch_device(email: str, device_id: str, platform: str) -> str:
     Raises DeviceRevokedError / DeviceLimitReachedError when login should
     be refused."""
     db = get_db()
-    existing = get_device(device_id)
+    # BEGIN IMMEDIATE closes the TOCTOU between the active-device-count
+    # read below and the insert that follows -- without it, two concurrent
+    # registrations for the same email can both read a count under the cap
+    # before either commits.
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        existing = get_device(device_id)
 
-    if existing is not None:
-        if existing["email"] != email:
-            # A device id colliding across two different emails should be
-            # essentially impossible (client-generated, high-entropy), but
-            # never let one email's login touch another's device row.
-            raise DeviceNotFoundError(device_id)
+        if existing is not None:
+            if existing["email"] != email:
+                # A device id colliding across two different emails should
+                # be essentially impossible (client-generated, high-
+                # entropy), but never let one email's login touch another's
+                # device row.
+                raise DeviceNotFoundError(device_id)
 
-        if existing["status"] == "revoked":
-            raise DeviceRevokedError(
-                "this device was revoked; log in from a different device "
-                "and generate a new device identity to reconnect"
+            if existing["status"] == "revoked":
+                raise DeviceRevokedError(
+                    "this device was revoked; log in from a different device "
+                    "and generate a new device identity to reconnect"
+                )
+
+            was_expired = existing["status"] == "expired"
+            db.execute(
+                "UPDATE devices SET status = 'active', platform = ?, last_seen_at = ? WHERE id = ?",
+                (platform, _now_iso(), device_id),
+            )
+            if was_expired:
+                # Reactivating an expired device is an "add" from the other
+                # party's point of view -- it wasn't in their trusted list a
+                # moment ago -- so it's version-bump-worthy like a brand new one.
+                bump_device_version(db, email)
+            db.commit()
+            return "active"
+
+        active_count = db.execute(
+            "SELECT COUNT(*) AS n FROM devices WHERE email = ? AND status = 'active'",
+            (email,),
+        ).fetchone()["n"]
+        if active_count >= DEVICE_CAP_PER_PERSON:
+            raise DeviceLimitReachedError(
+                f"{email} already has {active_count} active devices "
+                f"(limit {DEVICE_CAP_PER_PERSON}); revoke one first"
             )
 
-        was_expired = existing["status"] == "expired"
         db.execute(
-            "UPDATE devices SET status = 'active', platform = ?, last_seen_at = ? WHERE id = ?",
-            (platform, _now_iso(), device_id),
+            """
+            INSERT INTO devices (id, email, status, platform, last_seen_at, created_at)
+            VALUES (?, ?, 'active', ?, ?, ?)
+            """,
+            (device_id, email, platform, _now_iso(), _now_iso()),
         )
-        if was_expired:
-            # Reactivating an expired device is an "add" from the other
-            # party's point of view -- it wasn't in their trusted list a
-            # moment ago -- so it's version-bump-worthy like a brand new one.
-            bump_device_version(db, email)
+        bump_device_version(db, email)
         db.commit()
         return "active"
-
-    active_count = db.execute(
-        "SELECT COUNT(*) AS n FROM devices WHERE email = ? AND status = 'active'",
-        (email,),
-    ).fetchone()["n"]
-    if active_count >= DEVICE_CAP_PER_PERSON:
-        raise DeviceLimitReachedError(
-            f"{email} already has {active_count} active devices "
-            f"(limit {DEVICE_CAP_PER_PERSON}); revoke one first"
-        )
-
-    db.execute(
-        """
-        INSERT INTO devices (id, email, status, platform, last_seen_at, created_at)
-        VALUES (?, ?, 'active', ?, ?, ?)
-        """,
-        (device_id, email, platform, _now_iso(), _now_iso()),
-    )
-    bump_device_version(db, email)
-    db.commit()
-    return "active"
+    except Exception:
+        db.rollback()
+        raise
 
 
 def set_refresh_jti(device_id: str, jti: str) -> None:
