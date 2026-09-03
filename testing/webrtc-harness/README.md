@@ -87,3 +87,29 @@ node --test test/*.test.mjs
 browser doesn't support WebCrypto X25519/Ed25519 -- check that before
 relying on E2EE working in a given browser.
 
+### Running it in two tabs
+
+1. Fill in the LiveKit URL/token/access-token fields as usual (§13 Phase 3).
+2. Fill in the **device → email roster** field with a JSON object mapping
+   every other participant's LiveKit identity (= device id) to their
+   email, e.g. `{"dev-b": "b@example.com"}`. This is a testing-harness
+   concession, not something a real client needs -- see `group-e2ee.js`'s
+   header comment for why. Get identities from each tab's own connect log
+   or from whatever minted the room tokens.
+3. Click Connect in both tabs. Each tab publishes its own prekey bundle
+   after connecting (once its real LiveKit identity is known), then the
+   deterministically-elected earliest joiner generates and distributes
+   the room key.
+4. Compare the fingerprint shown under the video in both tabs -- they
+   should match. If a "rejoin" banner appears instead, see §6.1's
+   mismatch-retry policy in `rotation.js`.
+
+Actual frame encryption/decryption runs through LiveKit's own built-in
+E2EE (`key-provider.js`'s `GroupKeyProvider` feeds it the rotation-
+derived key) -- see that file's header comment for the one piece of this
+Phase 4 work that isn't unit tested here: it needs a real browser and a
+real LiveKit connection to exercise meaningfully, unlike the crypto
+modules above. `E2EE_WORKER_URL` there is pinned to an exact
+`livekit-client` version to match the SRI-pinned `<script>` tag in
+`index.html` -- if that version is ever bumped, bump both together.
+

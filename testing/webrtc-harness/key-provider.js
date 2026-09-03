@@ -21,7 +21,26 @@
 // livekit-client version app.js is pinned to" before trusting it beyond
 // this harness -- unlike signal-crypto.js and double-ratchet.js, this
 // file has no automated test coverage for that reason.
-import { BaseKeyProvider } from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
+//
+// Uses the `LivekitClient` global from index.html's SRI-pinned classic
+// <script> tag, not a separate CDN import -- app.js already loads that
+// exact, hash-verified build; importing a second copy from an unpinned
+// URL here would both duplicate the SDK and sidestep the SRI check
+// entirely.
+//
+// The frame cryptor itself runs in a dedicated Worker -- LiveKit ships
+// this as a separate file (`livekit-client.e2ee.worker.js`) alongside
+// the UMD build precisely for non-bundler setups like this harness.
+// Gap worth flagging: `new Worker(url)` has no `integrity` option, so
+// unlike the UMD <script> tag in index.html, this fetch isn't SRI-
+// pinned. Pinning the exact version in the URL bounds the risk to
+// "jsdelivr serves something other than what that exact version tag
+// points to", not "any version drift" -- acceptable for this test
+// harness, but call this out explicitly if this pattern gets reused
+// somewhere the risk profile is higher.
+export const E2EE_WORKER_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.2/dist/livekit-client.e2ee.worker.js";
+
+const { BaseKeyProvider } = LivekitClient;
 
 export class GroupKeyProvider extends BaseKeyProvider {
   constructor() {

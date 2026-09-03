@@ -27,13 +27,23 @@
 <label>ICE server list JSON (from POST /auth/room/turn-credentials)</label>
 <textarea id="ice" rows="3">[]</textarea>
 
-<label>Access token (for /auth/quality/report)</label>
+<label>Access token (for /auth/quality/report and /auth/prekeys/*)</label>
 <input id="accessToken" />
+
+<label>Device → email roster (JSON) — testing-harness concession, see README §Phase 4</label>
+<textarea id="roster" rows="2">{}</textarea>
 
 <button id="connectBtn">Connect</button>
 <button id="disconnectBtn">Disconnect</button>
 <button id="dataSaverBtn">Toggle data saver</button>
 <button id="audioOnlyBtn">Toggle audio-only</button>
+
+<div id="e2eeStatus" style="margin-top: 0.75rem; font-family: monospace; font-size: 0.85rem;">
+  E2EE: <span id="e2eeFingerprint">not connected</span>
+</div>
+<div id="rejoinPrompt" style="display:none; margin-top: 0.5rem; padding: 0.5rem; background: #4a1f1f; border: 1px solid #7a2f2f;">
+  Encryption keys don't match everyone in the call — disconnect and rejoin.
+</div>
 
 <video id="localVideo" autoplay muted playsinline></video>
 <div id="remoteVideos"></div>
@@ -53,6 +63,6 @@
   crossorigin="anonymous"
   defer
 ></script>
-<script src="app.js" defer></script>
+<script src="app.js" type="module" defer></script>
 </body>
 </html>

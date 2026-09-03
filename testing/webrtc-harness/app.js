@@ -14,6 +14,9 @@ const {
   Track,
 } = LivekitClient;
 
+import { GroupKeyProvider, E2EE_WORKER_URL } from "./key-provider.js";
+import { GroupE2EE, DATA_TOPIC } from "./group-e2ee.js";
+
 const logEl = document.getElementById("log");
 function log(...parts) {
   const line = `[${new Date().toISOString().slice(11, 19)}] ${parts.join(" ")}`;
@@ -26,6 +29,89 @@ let room = null;
 let dataSaverOn = false;
 let audioOnly = false;
 let poorQualityStreak = 0;
+let e2ee = null;
+
+function parseRoster() {
+  try {
+    return JSON.parse(document.getElementById("roster").value.trim() || "{}");
+  } catch {
+    log("device→email roster is not valid JSON, E2EE session establishment will fail for anyone not already known");
+    return {};
+  }
+}
+
+function updateFingerprintUi(fp, generation) {
+  document.getElementById("e2eeFingerprint").textContent = `${fp} (generation ${generation})`;
+}
+
+function showRejoinPrompt() {
+  log("E2EE: room key fingerprints disagree after a retry — prompting rejoin (§6.1)");
+  document.getElementById("rejoinPrompt").style.display = "block";
+}
+
+function makeKeyProvider() {
+  return new GroupKeyProvider();
+}
+
+async function publishPrekeysAndStartE2ee(keyProvider) {
+  const accessToken = document.getElementById("accessToken").value.trim();
+  const roster = parseRoster();
+
+  e2ee = new GroupE2EE({
+    keyProvider,
+    sendData: (payloadBytes, targetIdentities) => {
+      room.localParticipant.publishData(payloadBytes, {
+        reliable: true,
+        topic: DATA_TOPIC,
+        destinationIdentities: targetIdentities,
+      });
+    },
+    fetchBundle: async (email, deviceId) => {
+      const res = await fetch(`/auth/prekeys/${encodeURIComponent(email)}/${encodeURIComponent(deviceId)}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) throw new Error(`prekey bundle fetch failed for ${deviceId}: ${res.status}`);
+      return res.json();
+    },
+    emailForIdentity: (identity) => {
+      const email = roster[identity];
+      if (!email) throw new Error(`no email in the device→email roster for identity "${identity}"`);
+      return email;
+    },
+    onFingerprintChanged: (fp, generation) => {
+      log(`E2EE fingerprint: ${fp} (generation ${generation})`);
+      updateFingerprintUi(fp, generation);
+    },
+    onRejoinNeeded: showRejoinPrompt,
+  });
+
+  // currentDeviceId() only returns the real identity once room.connect()
+  // has resolved -- calling this any earlier would publish a bundle
+  // under "unknown-device" and every peer's bundle fetch for us would
+  // 404 forever. This function is only ever called after connect().
+  const publishPayload = await e2ee.initialize(currentDeviceId());
+  const res = await fetch("/auth/prekeys/me", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify(publishPayload),
+  });
+  if (!res.ok) {
+    log(`E2EE: publishing prekey bundle failed (${res.status}) — calls in this session will be unencrypted`);
+    e2ee = null;
+    return false;
+  }
+  log("E2EE: prekey bundle published");
+  return true;
+}
+
+function currentRoomMembership() {
+  const local = { identity: room.localParticipant.identity, joinedAtMs: room.localParticipant.joinedAt?.getTime() ?? 0 };
+  const remotes = [...room.remoteParticipants.values()].map((p) => ({
+    identity: p.identity,
+    joinedAtMs: p.joinedAt?.getTime() ?? 0,
+  }));
+  return [local, ...remotes];
+}
 
 // §13 Phase 3: sustained poor quality auto-triggers audio-only fallback
 // rather than waiting for the person to notice and toggle it themselves.
@@ -205,6 +291,8 @@ async function connect() {
 
   await probeIceConnectivity(iceServers);
 
+  const keyProvider = makeKeyProvider();
+
   room = new Room({
     // §13 Phase 3: simulcast + Dynacast + adaptive stream.
     publishDefaults: {
@@ -214,6 +302,19 @@ async function connect() {
     },
     adaptiveStream: true,
     rtcConfig: iceServers.length ? { iceServers } : undefined,
+    // §6/§13 Phase 4: the key provider has to exist before connect() per
+    // LiveKit's own setup order, but it starts out empty -- no key is
+    // applied until publishPrekeysAndStartE2ee() runs after connect(),
+    // once our real identity is known. Until then media just won't
+    // decrypt for anyone, which is the correct fail-closed behavior.
+    e2ee: { keyProvider, worker: new Worker(E2EE_WORKER_URL) },
+  });
+
+  await room.setE2EEEnabled(true);
+  room.on(RoomEvent.ParticipantConnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
+  room.on(RoomEvent.ParticipantDisconnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
+  room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+    if (topic === DATA_TOPIC && participant) e2ee?.handleDataMessage(payload, participant.identity);
   });
 
   room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
@@ -292,6 +393,8 @@ async function connect() {
   if (localTrack) localTrack.attach(document.getElementById("localVideo"));
 
   log("connected as", room.localParticipant.identity);
+  const e2eeReady = await publishPrekeysAndStartE2ee(keyProvider);
+  if (e2eeReady) await e2ee.onMembershipChanged(currentRoomMembership());
 
   setInterval(async () => {
     if (!room || room.state !== "connected") return;
@@ -303,7 +406,10 @@ async function connect() {
 async function disconnect() {
   await room?.disconnect();
   room = null;
+  e2ee = null;
   document.getElementById("remoteVideos").innerHTML = "";
+  document.getElementById("e2eeFingerprint").textContent = "not connected";
+  document.getElementById("rejoinPrompt").style.display = "none";
 }
 
 // §13 Phase 3: data-saver -- forces every remote video subscription to LOW
