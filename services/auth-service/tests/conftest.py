@@ -17,6 +17,7 @@ os.environ.setdefault("LIVEKIT_API_KEY", "test-key")
 os.environ.setdefault("LIVEKIT_API_SECRET", "test-secret-not-for-prod")
 os.environ.setdefault("LIVEKIT_URL", "wss://test.invalid")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-not-for-prod")
+os.environ.setdefault("WEB_CLIENT_ORIGIN", "https://app.test.invalid")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

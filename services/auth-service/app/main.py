@@ -14,6 +14,7 @@ configure_logging()
 
 import aiohttp
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
@@ -78,6 +79,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="auth-service", version="0.2.0", lifespan=lifespan)
+
+# One explicit origin, not "*" -- this API issues bearer tokens read out of
+# an Authorization header (never cookies), so there's no CSRF exposure from
+# naming a single origin, but there's also no reason to let an arbitrary
+# page's JS read responses meant for the one web client that exists.
+_web_client_origin = os.environ.get("WEB_CLIENT_ORIGIN")
+if _web_client_origin:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[_web_client_origin],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=False,
+    )
+else:
+    logger.warning("WEB_CLIENT_ORIGIN not set; no CORS policy configured (mobile/CLI-only setups can ignore this)")
 
 
 @app.middleware("http")
