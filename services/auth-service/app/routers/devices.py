@@ -2,14 +2,13 @@
 device-list version counter clients poll for the "changed" banner.
 
 Scope note on who can revoke what: the design doc (§4) describes both
-"revoke one device" and "revoke a person" but doesn't define any admin
-role above the allowlist itself, and this app has exactly the allowlisted
-members and no separate admin concept. So both operations here are
-self-service only — an authenticated person can revoke their *own*
-devices (e.g. "lost my phone, killing it from my laptop"), not someone
-else's. If a cross-person admin revoke ends up needed later (e.g. one
-member permanently cutting the other off), that's a deliberate follow-up,
-not an oversight of this pass.
+"revoke one device" and "revoke a person". Self-service (an authenticated
+person revoking their *own* devices, e.g. "lost my phone, killing it from
+my laptop") never required an admin concept and works the same as before.
+Cross-person revoke (one member permanently cutting the other off) does
+need one, so it's gated on the is_admin flag on the allowlist row
+(migrations/006_admin_revoke.sql, granted via ADMIN_EMAILS at migration
+time — see app/migrate.py) rather than exposed to every allowlisted member.
 """
 from fastapi import APIRouter, Header, HTTPException
 
@@ -17,7 +16,9 @@ from app.auth_deps import parse_access_token
 from app.devices import (
     DeviceNotFoundError,
     NotDeviceOwnerError,
+    admin_revoke_device,
     get_all_device_versions,
+    is_admin_email,
     list_devices_for_email,
     revoke_all_devices,
     revoke_device,
@@ -36,6 +37,15 @@ def _require_access_token(authorization: str | None) -> str:
     this device-status check is intentionally skipped.
     """
     return parse_access_token(authorization)["sub"]
+
+
+def _require_admin(authorization: str | None) -> str:
+    email = _require_access_token(authorization)
+    if not is_admin_email(email):
+        # 404, not 403 -- these routes exist for exactly one purpose and
+        # confirming that to a non-admin caller is its own small leak.
+        raise HTTPException(status_code=404, detail="not found")
+    return email
 
 
 @router.get("/me")
@@ -88,6 +98,50 @@ async def revoke_all_my_devices(authorization: str | None = Header(default=None)
             disconnected.append(device_id)
 
     return {"status": "revoked", "deviceIds": device_ids, "disconnectedLiveSessions": disconnected}
+
+
+@router.post("/admin/{device_id}/revoke")
+async def admin_revoke_one_device(device_id: str, authorization: str | None = Header(default=None)):
+    """Cross-person single-device revoke -- admin-only, see module
+    docstring. Same request/response shape as the self-service version
+    above, just without the ownership check."""
+    _require_admin(authorization)
+    try:
+        row = admin_revoke_device(device_id)
+    except DeviceNotFoundError:
+        raise HTTPException(status_code=404, detail="no such device")
+
+    removed_live = await remove_participant_everywhere(device_id)
+    return {
+        "status": "revoked",
+        "deviceId": device_id,
+        "email": row["email"],
+        "disconnectedLiveSession": removed_live,
+    }
+
+
+@router.post("/admin/{email}/revoke-all")
+async def admin_revoke_all_devices_for(email: str, authorization: str | None = Header(default=None)):
+    """"Revoke a person" (§4), cross-person -- admin-only. Not restricted
+    to allowlisted `email` values on this end -- revoke_all_devices is a
+    no-op for an email with no active devices, so there's nothing to
+    validate up front, and rejecting typos with a different error than
+    "nothing to revoke" would just be extra surface for no benefit."""
+    _require_admin(authorization)
+    normalized_email = email.lower()
+    device_ids = revoke_all_devices(normalized_email, trigger="admin")
+
+    disconnected = []
+    for device_id in device_ids:
+        if await remove_participant_everywhere(device_id):
+            disconnected.append(device_id)
+
+    return {
+        "status": "revoked",
+        "email": normalized_email,
+        "deviceIds": device_ids,
+        "disconnectedLiveSessions": disconnected,
+    }
 
 
 @router.get("/versions")

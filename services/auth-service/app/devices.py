@@ -106,6 +106,15 @@ def list_devices_for_email(email: str):
     ).fetchall()
 
 
+def is_admin_email(email: str) -> bool:
+    """Backs the two admin-only endpoints in routers/devices.py. is_admin
+    is granted by ADMIN_EMAILS at migration time (app/migrate.py) -- there's
+    no in-app way to self-promote."""
+    db = get_db()
+    row = db.execute("SELECT is_admin FROM allowlist WHERE email = ?", (email,)).fetchone()
+    return bool(row and row["is_admin"])
+
+
 def is_device_active(device_id: str, email: str) -> bool:
     """Cheap DB status lookup used on every access-token check (§4) --
     signature+expiry alone would let a revoked device ride out the token's

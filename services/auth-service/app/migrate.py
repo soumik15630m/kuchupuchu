@@ -34,6 +34,7 @@ def run_migrations() -> None:
         db.commit()
 
     seed_allowlist(db)
+    seed_admins(db)
 
 
 def seed_allowlist(db) -> None:
@@ -57,6 +58,32 @@ def seed_allowlist(db) -> None:
 
     if seed_list:
         print(f"[migrate] allowlist seeded/verified for: {', '.join(seed_list)}")
+
+
+def seed_admins(db) -> None:
+    """ADMIN_SEED_EMAILS (above) just means "known member" -- it's named
+    that way for historical reasons and predates the admin-privilege
+    concept entirely. ADMIN_EMAILS is the actual privilege grant, layered
+    on top: an email in here gets is_admin=1, but must already be on the
+    allowlist (running seed_allowlist first doesn't imply admin emails
+    were also added there -- they're independent lists on purpose, so
+    granting admin never silently expands the known-members set)."""
+    admin_emails = [
+        e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()
+    ]
+    if not admin_emails:
+        return
+
+    for email in admin_emails:
+        row = db.execute("SELECT 1 FROM allowlist WHERE email = ?", (email,)).fetchone()
+        if row is None:
+            raise RuntimeError(
+                f"ADMIN_EMAILS contains {email}, which is not on the allowlist "
+                "(add it to ADMIN_SEED_EMAILS first)"
+            )
+        db.execute("UPDATE allowlist SET is_admin = 1 WHERE email = ?", (email,))
+    db.commit()
+    print(f"[migrate] admin privilege granted to: {', '.join(admin_emails)}")
 
 
 if __name__ == "__main__":

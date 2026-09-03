@@ -112,8 +112,10 @@ docker compose up --build
 ```
 
 This builds and starts nginx, coturn, LiveKit, Redis, and auth-service.
-auth-service runs its SQLite migrations automatically on boot and seeds the
-allowlist from `ADMIN_SEED_EMAILS` in `.env`.
+auth-service runs its SQLite migrations automatically on boot, seeds the
+allowlist from `ADMIN_SEED_EMAILS` in `.env`, and grants cross-person
+revoke privilege to anyone listed in `ADMIN_EMAILS` (must already be in
+`ADMIN_SEED_EMAILS` — see `app/migrate.py:seed_admins`).
 
 Check everything's up:
 
