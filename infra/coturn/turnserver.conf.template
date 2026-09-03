@@ -43,5 +43,11 @@ denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
 denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
 
 no-cli
+# Default /var/run/turnserver.pid isn't writable by the unprivileged
+# turnserver user this runs as (infra/coturn/Dockerfile) -- harmless as a
+# warning (coturn starts fine either way, nothing reads this pidfile), but
+# pointing it somewhere actually writable is one less line of noise in
+# every container's logs.
+pidfile=/tmp/turnserver.pid
 no-tlsv1
 no-tlsv1_1
