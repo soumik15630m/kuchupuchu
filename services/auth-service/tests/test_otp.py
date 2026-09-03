@@ -129,3 +129,23 @@ def test_new_request_supersedes_previous_code(fresh_db):
     with pytest.raises(InvalidOtpError):
         verify_otp("a@example.com", first)
     verify_otp("a@example.com", second)
+
+
+def test_supersession_holds_even_with_identical_timestamps(fresh_db):
+    """Deterministic version of the test above: forces both rows to the
+    same created_at rather than relying on two calls landing in different
+    timesteps, since on a coarse clock (observed on Windows) they can
+    collide and a created_at-only ORDER BY has no way to break the tie."""
+    _allowlist(fresh_db, "a@example.com")
+    first = request_otp("a@example.com")
+    second = request_otp("a@example.com")
+
+    same_timestamp = datetime.now(timezone.utc).isoformat()
+    get_db().execute(
+        "UPDATE otp_codes SET created_at = ? WHERE email = ?", (same_timestamp, "a@example.com")
+    )
+    get_db().commit()
+
+    with pytest.raises(InvalidOtpError):
+        verify_otp("a@example.com", first)
+    verify_otp("a@example.com", second)

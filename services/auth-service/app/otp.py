@@ -90,12 +90,20 @@ def verify_otp(email: str, submitted_code: str) -> None:
     normalized = email.lower()
     db = get_db()
 
+    # id DESC as a tiebreaker, not just created_at DESC: two requests
+    # close enough together can land on the same created_at value (string
+    # timestamp resolution, or a coarser system clock), and without a
+    # deterministic tiebreaker SQLite can hand back either row on a tie --
+    # observed in practice returning the *older* row, which silently
+    # un-does "a new request supersedes the previous code." id is an
+    # AUTOINCREMENT primary key, so it's a reliable insertion-order proxy
+    # regardless of clock resolution.
     row = db.execute(
         """
         SELECT id, code_hash, expires_at, attempts, consumed
         FROM otp_codes
         WHERE email = ? AND consumed = 0
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
         (normalized,),
