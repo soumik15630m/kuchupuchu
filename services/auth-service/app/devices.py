@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.db import get_db
+from app.metrics import device_revocations_total
 
 # §4: "≤2-devices-per-person model" (one Android + one web, in practice).
 DEVICE_CAP_PER_PERSON = 2
@@ -200,12 +201,13 @@ def touch_heartbeat(device_id: str) -> None:
     db.commit()
 
 
-def revoke_device(device_id: str, caller_email: str):
-    """Revokes a single device. Only the device's own owner may revoke it
-    here -- see routers/devices.py for why cross-person revoke isn't
-    exposed yet. Returns the device row as it was *before* revocation
-    (caller needs `platform`/prior status for logging/LiveKit teardown).
-    Raises DeviceNotFoundError / NotDeviceOwnerError."""
+def revoke_device(device_id: str, caller_email: str, trigger: str = "self_service"):
+    """Revokes a single device. `caller_email` must be the device's own
+    owner -- see routers/devices.py for the one exception (admin revoke,
+    which calls admin_revoke_device instead of this). Returns the device
+    row as it was *before* revocation (caller needs `platform`/prior
+    status for logging/LiveKit teardown). Raises DeviceNotFoundError /
+    NotDeviceOwnerError."""
     db = get_db()
     row = get_device(device_id)
     if row is None:
@@ -217,10 +219,29 @@ def revoke_device(device_id: str, caller_email: str):
         db.execute("UPDATE devices SET status = 'revoked' WHERE id = ?", (device_id,))
         bump_device_version(db, caller_email)
         db.commit()
+        device_revocations_total.labels(trigger=trigger).inc()
     return row
 
 
-def revoke_all_devices(email: str) -> list[str]:
+def admin_revoke_device(device_id: str):
+    """Same effect as revoke_device, for an admin acting on someone else's
+    device -- skips the ownership check entirely, since checking it is the
+    whole point of self-service revoke and would defeat this one. Raises
+    DeviceNotFoundError. Returns the device row as it was before revocation."""
+    db = get_db()
+    row = get_device(device_id)
+    if row is None:
+        raise DeviceNotFoundError(device_id)
+
+    if row["status"] != "revoked":
+        db.execute("UPDATE devices SET status = 'revoked' WHERE id = ?", (device_id,))
+        bump_device_version(db, row["email"])
+        db.commit()
+        device_revocations_total.labels(trigger="admin").inc()
+    return row
+
+
+def revoke_all_devices(email: str, trigger: str = "self_service") -> list[str]:
     """"Revoke a person" (§4) -- cascades to every device of `email`.
     Bumps the version counter once for the whole batch, not once per
     device. Returns the ids that were actually flipped to revoked (already-
@@ -239,6 +260,7 @@ def revoke_all_devices(email: str) -> list[str]:
     )
     bump_device_version(db, email)
     db.commit()
+    device_revocations_total.labels(trigger=trigger).inc(len(device_ids))
     return device_ids
 
 

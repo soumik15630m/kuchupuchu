@@ -1,19 +1,26 @@
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+from app.logging_config import configure_logging
+
+configure_logging()
+
 import aiohttp
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.db import get_db
 from app.devices import expire_stale_web_devices
 from app.livekit_admin import close_client, init_client
+from app.metrics import http_request_duration_seconds, http_requests_total
 from app.quality import prune_old_quality_reports
 from app.routers import auth as auth_router
 from app.routers import devices as devices_router
@@ -71,6 +78,31 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="auth-service", version="0.2.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _metrics_middleware(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration = time.monotonic() - start
+
+    # request.url.path, not raw path -- avoids a label-cardinality blowup
+    # from path params (device ids, room names) each becoming their own
+    # Prometheus series. FastAPI resolves the matched route template onto
+    # the request scope before this returns.
+    route = request.scope.get("route")
+    path_label = route.path if route is not None else request.url.path
+
+    http_requests_total.labels(
+        method=request.method, path=path_label, status=response.status_code
+    ).inc()
+    http_request_duration_seconds.labels(method=request.method, path=path_label).observe(duration)
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/healthz")

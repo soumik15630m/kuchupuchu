@@ -118,7 +118,7 @@ def token_refresh(body: RefreshBody):
     device = get_device(device_id)
     stored_jti = device["refresh_jti"] if device else None
     if stored_jti and payload["jti"] != stored_jti:
-        revoke_all_devices(email)
+        revoke_all_devices(email, trigger="refresh_reuse")
         raise HTTPException(
             status_code=401,
             detail="refresh token reuse detected; all devices revoked, log in again",

@@ -4,3 +4,4 @@ pydantic[email]==2.9.2
 pyjwt==2.9.0
 python-dotenv==1.0.1
 livekit-api==1.2.1
+prometheus-client==0.26.0

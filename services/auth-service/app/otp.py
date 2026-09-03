@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from app.db import get_db
+from app.metrics import otp_requests_total, otp_verifications_total
 
 OTP_TTL_MIN = 10
 MAX_REQUESTS_PER_HOUR = 5  # §4
@@ -50,6 +51,7 @@ def request_otp(email: str) -> str:
     Never stored or logged in plaintext beyond that."""
     normalized = email.lower()
     if not _is_allowlisted(normalized):
+        otp_requests_total.labels(outcome="not_allowlisted").inc()
         raise NotAllowlistedError(f"{normalized} is not on the allowlist")
 
     db = get_db()
@@ -65,6 +67,7 @@ def request_otp(email: str) -> str:
         ).fetchone()
 
         if recent["n"] >= MAX_REQUESTS_PER_HOUR:
+            otp_requests_total.labels(outcome="rate_limited").inc()
             raise RateLimitedError(f"{normalized} has requested {recent['n']} OTPs in the last hour")
 
         code = f"{secrets.randbelow(1_000_000):06d}"
@@ -75,6 +78,7 @@ def request_otp(email: str) -> str:
             (normalized, _hash_code(code), expires_at, _now().isoformat()),
         )
         db.commit()
+        otp_requests_total.labels(outcome="sent").inc()
         return code
     except Exception:
         db.rollback()
@@ -98,20 +102,25 @@ def verify_otp(email: str, submitted_code: str) -> None:
     ).fetchone()
 
     if row is None:
+        otp_verifications_total.labels(outcome="invalid").inc()
         raise InvalidOtpError("no active OTP for this email")
 
     if row["attempts"] >= MAX_VERIFY_ATTEMPTS:
         db.execute("UPDATE otp_codes SET consumed = 1 WHERE id = ?", (row["id"],))
         db.commit()
+        otp_verifications_total.labels(outcome="too_many_attempts").inc()
         raise TooManyAttemptsError("too many verification attempts; request a new code")
 
     if datetime.fromisoformat(row["expires_at"]) < _now():
+        otp_verifications_total.labels(outcome="expired").inc()
         raise OtpExpiredError("OTP expired; request a new code")
 
     if not hmac.compare_digest(_hash_code(submitted_code), row["code_hash"]):
         db.execute("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?", (row["id"],))
         db.commit()
+        otp_verifications_total.labels(outcome="invalid").inc()
         raise InvalidOtpError("incorrect code")
 
     db.execute("UPDATE otp_codes SET consumed = 1 WHERE id = ?", (row["id"],))
     db.commit()
+    otp_verifications_total.labels(outcome="success").inc()
