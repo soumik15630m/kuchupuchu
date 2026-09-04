@@ -14,7 +14,7 @@ const {
   Track,
 } = LivekitClient;
 
-import { GroupKeyProvider, E2EE_WORKER_URL } from "./key-provider.js";
+import { GroupKeyProvider, createE2eeWorker } from "./key-provider.js";
 import { GroupE2EE, DATA_TOPIC } from "./group-e2ee.js";
 
 const logEl = document.getElementById("log");
@@ -292,6 +292,12 @@ async function connect() {
   await probeIceConnectivity(iceServers);
 
   const keyProvider = makeKeyProvider();
+  let e2eeWorker = null;
+  try {
+    e2eeWorker = await createE2eeWorker();
+  } catch (err) {
+    log(`E2EE: could not load the frame-cryptor worker (${err.message}) — this call will be unencrypted`);
+  }
 
   room = new Room({
     // §13 Phase 3: simulcast + Dynacast + adaptive stream.
@@ -307,15 +313,17 @@ async function connect() {
     // applied until publishPrekeysAndStartE2ee() runs after connect(),
     // once our real identity is known. Until then media just won't
     // decrypt for anyone, which is the correct fail-closed behavior.
-    e2ee: { keyProvider, worker: new Worker(E2EE_WORKER_URL) },
+    e2ee: e2eeWorker ? { keyProvider, worker: e2eeWorker } : undefined,
   });
 
-  await room.setE2EEEnabled(true);
-  room.on(RoomEvent.ParticipantConnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
-  room.on(RoomEvent.ParticipantDisconnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
-  room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-    if (topic === DATA_TOPIC && participant) e2ee?.handleDataMessage(payload, participant.identity);
-  });
+  if (e2eeWorker) {
+    await room.setE2EEEnabled(true);
+    room.on(RoomEvent.ParticipantConnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
+    room.on(RoomEvent.ParticipantDisconnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
+    room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+      if (topic === DATA_TOPIC && participant) e2ee?.handleDataMessage(payload, participant.identity);
+    });
+  }
 
   room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
     if (participant !== room.localParticipant) return;
@@ -393,8 +401,10 @@ async function connect() {
   if (localTrack) localTrack.attach(document.getElementById("localVideo"));
 
   log("connected as", room.localParticipant.identity);
-  const e2eeReady = await publishPrekeysAndStartE2ee(keyProvider);
-  if (e2eeReady) await e2ee.onMembershipChanged(currentRoomMembership());
+  if (e2eeWorker) {
+    const e2eeReady = await publishPrekeysAndStartE2ee(keyProvider);
+    if (e2eeReady) await e2ee.onMembershipChanged(currentRoomMembership());
+  }
 
   setInterval(async () => {
     if (!room || room.state !== "connected") return;

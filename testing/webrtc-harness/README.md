@@ -109,7 +109,11 @@ E2EE (`key-provider.js`'s `GroupKeyProvider` feeds it the rotation-
 derived key) -- see that file's header comment for the one piece of this
 Phase 4 work that isn't unit tested here: it needs a real browser and a
 real LiveKit connection to exercise meaningfully, unlike the crypto
-modules above. `E2EE_WORKER_URL` there is pinned to an exact
-`livekit-client` version to match the SRI-pinned `<script>` tag in
-`index.html` -- if that version is ever bumped, bump both together.
+modules above. `createE2eeWorker()` there fetches the frame-cryptor
+worker script and constructs it from a `blob:` URL rather than the raw
+CDN URL directly -- `new Worker(crossOriginUrl)` is rejected by every
+browser regardless of CORS headers, which only surfaces the first time
+someone actually runs this in a browser (see git history for exactly
+that). The pinned version there needs to move in lockstep with the
+SRI-pinned `<script>` tag in `index.html` if either is ever bumped.
 

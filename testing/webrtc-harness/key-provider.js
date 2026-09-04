@@ -31,14 +31,40 @@
 // The frame cryptor itself runs in a dedicated Worker -- LiveKit ships
 // this as a separate file (`livekit-client.e2ee.worker.js`) alongside
 // the UMD build precisely for non-bundler setups like this harness.
-// Gap worth flagging: `new Worker(url)` has no `integrity` option, so
-// unlike the UMD <script> tag in index.html, this fetch isn't SRI-
-// pinned. Pinning the exact version in the URL bounds the risk to
-// "jsdelivr serves something other than what that exact version tag
-// points to", not "any version drift" -- acceptable for this test
-// harness, but call this out explicitly if this pattern gets reused
-// somewhere the risk profile is higher.
-export const E2EE_WORKER_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.2/dist/livekit-client.e2ee.worker.js";
+//
+// `new Worker(url)` refuses a cross-origin URL outright -- unlike a
+// <script> tag, the Worker constructor has no `crossorigin` opt-in, so
+// pointing it straight at the jsdelivr URL throws
+// "Script at '...' cannot be accessed from origin '...'" the moment
+// connect() runs, in every browser, regardless of CORS headers on the
+// response. The standard workaround: fetch the script text ourselves
+// (jsdelivr's CORS headers make that fetch itself unproblematic), wrap
+// it in a same-origin `blob:` URL, and construct the Worker from that.
+//
+// Gap worth flagging: this fetch isn't SRI-pinned the way index.html's
+// UMD <script> tag is (`Worker`/`fetch` have no `integrity` option tied
+// to worker construction the way <script integrity> does). Pinning the
+// exact version in the URL bounds the risk to "jsdelivr serves something
+// other than what that exact version tag points to", not "any version
+// drift" -- acceptable for this test harness, but call this out
+// explicitly if this pattern gets reused somewhere the risk profile is
+// higher.
+const E2EE_WORKER_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.2/dist/livekit-client.e2ee.worker.js";
+
+export async function createE2eeWorker() {
+  const res = await fetch(E2EE_WORKER_SCRIPT_URL);
+  if (!res.ok) throw new Error(`failed to fetch E2EE worker script: ${res.status}`);
+  const scriptText = await res.text();
+  const blobUrl = URL.createObjectURL(new Blob([scriptText], { type: "application/javascript" }));
+  try {
+    return new Worker(blobUrl);
+  } finally {
+    // The Worker has already read the blob synchronously during
+    // construction -- revoking immediately after is safe and avoids
+    // leaking the object URL for the lifetime of the page.
+    URL.revokeObjectURL(blobUrl);
+  }
+}
 
 const { BaseKeyProvider } = LivekitClient;
 
