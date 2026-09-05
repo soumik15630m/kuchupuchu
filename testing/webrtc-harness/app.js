@@ -31,6 +31,26 @@ let audioOnly = false;
 let poorQualityStreak = 0;
 let e2ee = null;
 
+// Every /auth/* call in this file used to be a relative fetch (e.g.
+// fetch("/auth/prekeys/me")), which resolves against whatever origin is
+// serving *this page* -- fine if the harness happens to be served
+// through the same nginx that proxies /auth/ (as it apparently once
+// was), silently wrong the moment it's opened any other way (a plain
+// `python3 -m http.server`, a different dev server, file://, ...), and
+// nothing about that failure mode says so -- it just 501s or 404s
+// depending on what's actually listening on the harness's own origin.
+// WEB_CLIENT_ORIGIN existing as a CORS setting on the backend is the
+// tell: this was always meant to be genuinely cross-origin. The LiveKit
+// URL field already has the one hostname that's guaranteed to be
+// correct (nginx's app.conf.template proxies both LiveKit signaling and
+// /auth/ from the same server block), so derive the API origin from it
+// instead of assuming same-origin.
+function apiBaseUrl() {
+  const liveKitUrl = document.getElementById("url").value.trim();
+  if (!liveKitUrl) return "";
+  return liveKitUrl.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://").replace(/\/$/, "");
+}
+
 function parseRoster() {
   try {
     return JSON.parse(document.getElementById("roster").value.trim() || "{}");
@@ -67,7 +87,7 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
       });
     },
     fetchBundle: async (email, deviceId) => {
-      const res = await fetch(`/auth/prekeys/${encodeURIComponent(email)}/${encodeURIComponent(deviceId)}`, {
+      const res = await fetch(`${apiBaseUrl()}/auth/prekeys/${encodeURIComponent(email)}/${encodeURIComponent(deviceId)}`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (!res.ok) throw new Error(`prekey bundle fetch failed for ${deviceId}: ${res.status}`);
@@ -90,7 +110,7 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
   // under "unknown-device" and every peer's bundle fetch for us would
   // 404 forever. This function is only ever called after connect().
   const publishPayload = await e2ee.initialize(currentDeviceId());
-  const res = await fetch("/auth/prekeys/me", {
+  const res = await fetch(`${apiBaseUrl()}/auth/prekeys/me`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify(publishPayload),
@@ -130,7 +150,7 @@ async function reportQuality(candidateInfo) {
   const accessToken = document.getElementById("accessToken").value.trim();
   if (!accessToken || !room) return;
   try {
-    await fetch("/auth/quality/report", {
+    await fetch(`${apiBaseUrl()}/auth/quality/report`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
