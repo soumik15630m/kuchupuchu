@@ -394,11 +394,26 @@ async function connect() {
   }
   log(`connect() resolved in ${Math.round(performance.now() - startedAt)}ms`);
 
-  await room.localParticipant.enableCameraAndMicrophone();
-  const localTrack = [...room.localParticipant.trackPublications.values()].find(
-    (p) => p.kind === Track.Kind.Video
-  )?.track;
-  if (localTrack) localTrack.attach(document.getElementById("localVideo"));
+  try {
+    await room.localParticipant.enableCameraAndMicrophone();
+    const localTrack = [...room.localParticipant.trackPublications.values()].find(
+      (p) => p.kind === Track.Kind.Video
+    )?.track;
+    if (localTrack) localTrack.attach(document.getElementById("localVideo"));
+  } catch (err) {
+    // Common on this harness specifically: two tabs on one machine both
+    // requesting the same physical webcam, which most drivers won't let
+    // a second consumer open even within the same browser. Falling back
+    // to audio-only lets the call (and, more importantly, the E2EE setup
+    // below, which has nothing to do with the camera) proceed instead of
+    // the whole connect() aborting on a media-device error.
+    log(`camera unavailable (${err.name ?? "Error"}: ${err.message}) — falling back to audio-only`);
+    try {
+      await room.localParticipant.setMicrophoneEnabled(true);
+    } catch (micErr) {
+      log(`microphone also unavailable (${micErr.name ?? "Error"}: ${micErr.message}) — continuing with no local media`);
+    }
+  }
 
   log("connected as", room.localParticipant.identity);
   if (e2eeWorker) {
