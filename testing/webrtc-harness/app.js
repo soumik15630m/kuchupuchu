@@ -311,12 +311,17 @@ async function connect() {
 
   await probeIceConnectivity(iceServers);
 
+  const e2eeUserWantsIt = document.getElementById("e2eeEnabled").checked;
   const keyProvider = makeKeyProvider();
   let e2eeWorker = null;
-  try {
-    e2eeWorker = await createE2eeWorker();
-  } catch (err) {
-    log(`E2EE: could not load the frame-cryptor worker (${err.message}) — this call will be unencrypted`);
+  if (e2eeUserWantsIt) {
+    try {
+      e2eeWorker = await createE2eeWorker();
+    } catch (err) {
+      log(`E2EE: could not load the frame-cryptor worker (${err.message}) — this call will be unencrypted`);
+    }
+  } else {
+    log("E2EE: disabled via checkbox for this connection");
   }
 
   room = new Room({
@@ -421,17 +426,20 @@ async function connect() {
     )?.track;
     if (localTrack) localTrack.attach(document.getElementById("localVideo"));
   } catch (err) {
-    // Common on this harness specifically: two tabs on one machine both
-    // requesting the same physical webcam, which most drivers won't let
-    // a second consumer open even within the same browser. Falling back
-    // to audio-only lets the call (and, more importantly, the E2EE setup
-    // below, which has nothing to do with the camera) proceed instead of
-    // the whole connect() aborting on a media-device error.
-    log(`camera unavailable (${err.name ?? "Error"}: ${err.message}) — falling back to audio-only`);
+    // NOT a camera/mic access problem -- confirmed via chrome://webrtc-internals
+    // that getUserMedia() itself succeeds in under a second, every time, with
+    // real hardware. This NegotiationError comes from the step after that:
+    // LiveKit renegotiating the peer connection to actually publish the
+    // already-acquired track to the SFU. That renegotiation stalling is
+    // suspiciously well-correlated with the ICE-restart cycling seen
+    // elsewhere in this file's logs -- worth treating as one bug, not two,
+    // until proven otherwise. The e2eeEnabled checkbox exists specifically
+    // to test whether this is an E2EE/frame-cryptor interaction.
+    log(`track-publish negotiation failed (${err.name ?? "Error"}: ${err.message}) — falling back to audio-only`);
     try {
       await room.localParticipant.setMicrophoneEnabled(true);
     } catch (micErr) {
-      log(`microphone also unavailable (${micErr.name ?? "Error"}: ${micErr.message}) — continuing with no local media`);
+      log(`microphone track-publish also failed (${micErr.name ?? "Error"}: ${micErr.message}) — continuing with no local media`);
     }
   }
 
