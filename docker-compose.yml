@@ -19,6 +19,13 @@ services:
       - auth-service
     volumes:
       - ./certs:/etc/letsencrypt:ro
+      # §13 Phase 3/4 testing aid only -- getUserMedia() requires a secure
+      # context (HTTPS, or specifically http://localhost), which a LAN IP
+      # over plain HTTP never qualifies as. Serving the harness from this
+      # same HTTPS origin, instead of a separate `python3 -m http.server`
+      # on a different port/scheme, is what makes real camera/mic testing
+      # across two machines possible at all -- not just a convenience.
+      - ./testing/webrtc-harness:/usr/share/nginx/harness:ro
     restart: unless-stopped
 
   coturn:

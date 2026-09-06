@@ -56,4 +56,33 @@ server {
         return 200 "ok\n";
         add_header Content-Type text/plain;
     }
+
+    # §13 Phase 3/4 testing aid only -- not part of the real product surface
+    # (Phase 5's actual web client is a separate thing entirely). Serving
+    # from here rather than a standalone dev server means the harness's
+    # own fetch() calls, and getUserMedia's secure-context requirement,
+    # both work correctly without any same-origin/mixed-content gymnastics.
+    location /harness/ {
+        alias /usr/share/nginx/harness/;
+        try_files $uri $uri/ =404;
+
+        # nginx doesn't inherit add_header from the server block once a
+        # location sets its own -- these are restated, not just the CSP
+        # override, or HSTS/X-Frame-Options/etc. would silently vanish
+        # for this one path.
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        # Loosened relative to the server-wide policy above, and ONLY
+        # here: the harness loads livekit-client's UMD build and its
+        # E2EE worker script from jsdelivr (index.html/key-provider.js),
+        # and the frame-cryptor worker runs from a blob: URL constructed
+        # from that fetched script (see key-provider.js's header comment
+        # for why it's a blob: URL and not the CDN URL directly). None of
+        # the actual API paths (/auth/, LiveKit signaling) serve HTML/JS,
+        # so tightening this back down for them wouldn't do anything
+        # meaningful -- the point is not loosening it for paths where it
+        # would matter.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'" always;
+    }
 }
