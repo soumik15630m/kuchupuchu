@@ -59,6 +59,7 @@ export class GroupE2EE {
     this.generation = -1;
     this.convergence = null;
     this.lastParticipants = null;
+    this.lastParticipantIdentities = null;
   }
 
   async initialize(myDeviceIdentity) {
@@ -99,6 +100,19 @@ export class GroupE2EE {
    * change, but only the rotator's call has an effect, by design (see
    * rotation.js). */
   async onMembershipChanged(participants) {
+    const identities = participants.map((p) => p.identity).sort();
+    const key = identities.join(",");
+    // §6.1 says rotate "on join/leave" -- not "on every event that fires
+    // while membership happens to be unchanged". Without this check, an
+    // SDK-level ParticipantConnected re-fire for an already-known peer
+    // (observed happening during ICE-restart reconnects) makes the
+    // elected rotator mint a brand-new random key from scratch every
+    // time, so both sides chase a moving target and never converge --
+    // exactly the symptom of three different fingerprints inside fifteen
+    // seconds with no real membership change between them.
+    if (this.lastParticipantIdentities === key) return;
+    this.lastParticipantIdentities = key;
+
     this.lastParticipants = participants;
     const rotator = electRotator(participants);
     if (rotator !== this.myDeviceIdentity) return;
