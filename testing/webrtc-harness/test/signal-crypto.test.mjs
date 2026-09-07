@@ -160,3 +160,24 @@ test("verifyBundle rejects a tampered signed_prekey even when called standalone"
 
   await assert.rejects(() => verifyBundle(bundle), /does not verify/);
 });
+
+test("identity private keys are non-extractable -- exportKey on them must throw", async () => {
+  const identity = await generateIdentity({ oneTimePrekeyCount: 1 });
+
+  assert.equal(identity.signingKeyPair.privateKey.extractable, false);
+  assert.equal(identity.dhIdentityKeyPair.privateKey.extractable, false);
+  assert.equal(identity.signedPrekeyPair.privateKey.extractable, false);
+  for (const pair of identity.oneTimePrekeys.values()) {
+    assert.equal(pair.privateKey.extractable, false);
+  }
+
+  // Belt and suspenders: extractable=false should make exportKey itself
+  // throw, not just report the flag correctly.
+  await assert.rejects(() => crypto.subtle.exportKey("pkcs8", identity.signingKeyPair.privateKey));
+
+  // The public halves must still be exportable -- that's the whole
+  // point of generating a keypair with extractable: false rather than
+  // some more drastic "can't touch any of it" approach.
+  const publicRaw = await crypto.subtle.exportKey("raw", identity.signingKeyPair.publicKey);
+  assert.equal(new Uint8Array(publicRaw).byteLength, 32);
+});

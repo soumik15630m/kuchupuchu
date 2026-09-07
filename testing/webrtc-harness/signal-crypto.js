@@ -104,22 +104,25 @@ const X3DH_PREFIX = new Uint8Array(32).fill(0xff);
 /** Generates a brand-new device identity: a long-term Ed25519 signing
  * keypair, the X25519 identity-agreement keypair it cross-signs (see
  * 005_phase4_identity_dh_key.sql for why these are separate keys), one
- * signed prekey, and a batch of one-time prekeys. Everything stays as
- * CryptoKey objects (non-extractable where it doesn't need to be
- * exported) until publishBundlePayload() below serializes the public
- * halves for the wire. */
+ * signed prekey, and a batch of one-time prekeys. Every keypair here is
+ * generated with extractable: false -- per the WebCrypto spec, that
+ * still leaves publicKey.extractable forced to true (public keys aren't
+ * sensitive), while privateKey.extractable becomes false and
+ * exportKey() on it throws. Nothing in this file or the ones that call
+ * it ever needs to export a private key -- only the public halves get
+ * serialized, in buildPublishPayload() below. */
 export async function generateIdentity({ oneTimePrekeyCount = 20 } = {}) {
   await assertSecureCurvesSupported();
 
-  const signingKeyPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
-  const dhIdentityKeyPair = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const signingKeyPair = await crypto.subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
+  const dhIdentityKeyPair = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
 
-  const signedPrekeyPair = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const signedPrekeyPair = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
   const signedPrekeyId = 1;
 
   const oneTimePrekeys = new Map();
   for (let keyId = 0; keyId < oneTimePrekeyCount; keyId++) {
-    oneTimePrekeys.set(keyId, await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]));
+    oneTimePrekeys.set(keyId, await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]));
   }
 
   return {
@@ -174,7 +177,7 @@ export async function generateMoreOneTimePrekeys(identity, count) {
   const newIds = [];
   for (let i = 0; i < count; i++) {
     const keyId = identity.nextOneTimePrekeyId++;
-    identity.oneTimePrekeys.set(keyId, await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]));
+    identity.oneTimePrekeys.set(keyId, await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]));
     newIds.push(keyId);
   }
   return buildPublishPayload(identity, { oneTimePrekeyIds: newIds });
@@ -220,7 +223,7 @@ export async function initiateSession(myIdentity, theirBundle) {
     ? await importX25519PublicKey(base64Decode(theirBundle.one_time_prekey.public_key))
     : null;
 
-  const ephemeralKeyPair = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const ephemeralKeyPair = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
 
   const dh1 = await ecdh(myIdentity.dhIdentityKeyPair.privateKey, theirSignedPrekey);
   const dh2 = await ecdh(ephemeralKeyPair.privateKey, theirIdentityDhKey);
