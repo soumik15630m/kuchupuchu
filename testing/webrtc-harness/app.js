@@ -30,6 +30,7 @@ let dataSaverOn = false;
 let audioOnly = false;
 let poorQualityStreak = 0;
 let e2ee = null;
+let cachedCryptoIdentity = null;
 
 // Every /auth/* call in this file used to be a relative fetch (e.g.
 // fetch("/auth/prekeys/me")), which resolves against whatever origin is
@@ -109,7 +110,7 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
   // has resolved -- calling this any earlier would publish a bundle
   // under "unknown-device" and every peer's bundle fetch for us would
   // 404 forever. This function is only ever called after connect().
-  const publishPayload = await e2ee.initialize(currentDeviceId());
+  const publishPayload = await e2ee.initialize(currentDeviceId(), cachedCryptoIdentity);
   const res = await fetch(`${apiBaseUrl()}/auth/prekeys/me`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
@@ -121,6 +122,7 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
     return false;
   }
   log("E2EE: prekey bundle published");
+  cachedCryptoIdentity = e2ee.identity;
   return true;
 }
 
@@ -392,6 +394,14 @@ async function connect() {
       el.style.width = "320px";
       document.getElementById("remoteVideos").appendChild(el);
       log("subscribed to video from", participant.identity);
+    } else if (track.kind === Track.Kind.Audio) {
+      // Needs to actually be in the DOM to play in most browsers --
+      // a detached element from track.attach() won't reliably produce
+      // sound even though the track itself is flowing correctly.
+      const el = track.attach();
+      el.style.display = "none";
+      document.body.appendChild(el);
+      log("subscribed to audio from", participant.identity);
     }
   });
 
