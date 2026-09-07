@@ -62,10 +62,19 @@ export class GroupE2EE {
     this.lastParticipantIdentities = null;
   }
 
-  async initialize(myDeviceIdentity) {
+  async initialize(myDeviceIdentity, existingIdentity = null) {
     this.myDeviceIdentity = myDeviceIdentity;
-    this.identity = await generateIdentity();
-    return buildPublishPayload(this.identity);
+    this.identity = existingIdentity ?? (await generateIdentity());
+    const alreadyPublished = existingIdentity !== null;
+    const payload = await buildPublishPayload(this.identity, {
+      // A device's identity/signed-prekey re-upload is idempotent server
+      // side (see prekeys.py), but one-time prekeys are strictly
+      // one-shot -- re-sending the same key_ids on every reconnect would
+      // 409 every time instead of just the identity fields. Only publish
+      // them the first time this identity is ever used.
+      oneTimePrekeyIds: alreadyPublished ? [] : undefined,
+    });
+    return payload;
   }
 
   async topUpOneTimePrekeysIfLow(remoteUnusedCount) {
