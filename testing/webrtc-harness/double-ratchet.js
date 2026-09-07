@@ -131,9 +131,13 @@ const GCM_IV_BYTES = 12;
 
 /** AES-256-GCM seal/open for the one thing this module's chain keys are
  * ever used to protect: a room-key-rotation blob addressed to one peer.
- * Each call generates a fresh random IV -- safe because each message key
- * this is used with is itself single-use (see TransportChain above), so
- * there's no key/IV pair ever reused across two different plaintexts. */
+ * Each call generates a fresh random IV, which is what actually makes
+ * key/IV reuse safe here -- not that the key itself is single-use (a
+ * repeated keyForGeneration(N) call intentionally returns the same key,
+ * see the idempotency note above, so the key CAN be reused across
+ * multiple seal() calls; what must never repeat is the (key, IV) pair,
+ * and a fresh random 96-bit IV per call is the standard way GCM is used
+ * safely at this message volume -- the same pattern TLS uses). */
 export async function seal(keyBytes, plaintextBytes, associatedData) {
   const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["encrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(GCM_IV_BYTES));
