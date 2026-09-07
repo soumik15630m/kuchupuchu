@@ -65,6 +65,18 @@ function updateFingerprintUi(fp, generation) {
   document.getElementById("e2eeFingerprint").textContent = `${fp} (generation ${generation})`;
 }
 
+const safetyNumbersByPeer = new Map();
+function updateSafetyNumberUi(peerIdentity, safetyNumber) {
+  safetyNumbersByPeer.set(peerIdentity, safetyNumber);
+  const list = document.getElementById("safetyNumberList");
+  list.innerHTML = "";
+  for (const [identity, sn] of safetyNumbersByPeer) {
+    const li = document.createElement("li");
+    li.textContent = `${identity}: ${sn}`;
+    list.appendChild(li);
+  }
+}
+
 function showRejoinPrompt() {
   log("E2EE: room key fingerprints disagree after a retry — prompting rejoin (§6.1)");
   document.getElementById("rejoinPrompt").style.display = "block";
@@ -102,6 +114,10 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
     onFingerprintChanged: (fp, generation) => {
       log(`E2EE fingerprint: ${fp} (generation ${generation})`);
       updateFingerprintUi(fp, generation);
+    },
+    onIdentitySafetyNumber: (peerIdentity, safetyNumber) => {
+      log(`E2EE identity safety number for ${peerIdentity}: ${safetyNumber}`);
+      updateSafetyNumberUi(peerIdentity, safetyNumber);
     },
     onRejoinNeeded: showRejoinPrompt,
   });
@@ -478,6 +494,8 @@ async function disconnect() {
   e2ee = null;
   document.getElementById("remoteVideos").innerHTML = "";
   document.getElementById("e2eeFingerprint").textContent = "not connected";
+  safetyNumbersByPeer.clear();
+  document.getElementById("safetyNumberList").innerHTML = "";
   document.getElementById("rejoinPrompt").style.display = "none";
 }
 

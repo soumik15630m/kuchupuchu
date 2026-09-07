@@ -16,6 +16,7 @@ import {
   respondToSession,
   base64Encode,
   base64Decode,
+  computeIdentitySafetyNumber,
 } from "./signal-crypto.js";
 import { initTransportChain, fingerprint, seal, open } from "./double-ratchet.js";
 import { electRotator, FingerprintConvergence } from "./rotation.js";
@@ -42,14 +43,21 @@ export class GroupE2EE {
    * @param {(deviceIdentity: string) => string} deps.emailForIdentity
    *   Testing-harness concession: a real client already knows this from its own device directory; this harness asks the operator for a small roster instead of building one. See README.
    * @param {(fp: string, generation: number) => void} [deps.onFingerprintChanged]
+   * @param {(peerIdentity: string, safetyNumber: string) => void} [deps.onIdentitySafetyNumber]
+   *   Distinct from onFingerprintChanged -- this is the identity-based
+   *   value that stays stable across reconnects/rotations and is what
+   *   should actually be compared out-of-band. See
+   *   signal-crypto.js's computeIdentitySafetyNumber for why the two
+   *   are not the same thing.
    * @param {() => void} [deps.onRejoinNeeded] - §6.1: called when a mismatch survives one retry.
    */
-  constructor({ keyProvider, sendData, fetchBundle, emailForIdentity, onFingerprintChanged, onRejoinNeeded }) {
+  constructor({ keyProvider, sendData, fetchBundle, emailForIdentity, onFingerprintChanged, onIdentitySafetyNumber, onRejoinNeeded }) {
     this.keyProvider = keyProvider;
     this.sendData = sendData;
     this.fetchBundle = fetchBundle;
     this.emailForIdentity = emailForIdentity;
     this.onFingerprintChanged = onFingerprintChanged ?? (() => {});
+    this.onIdentitySafetyNumber = onIdentitySafetyNumber ?? (() => {});
     this.onRejoinNeeded = onRejoinNeeded ?? (() => {});
 
     this.identity = null;
@@ -92,6 +100,12 @@ export class GroupE2EE {
     const chain = await initTransportChain(sharedSecret, bootstrapDh);
     const session = { chain };
     this.sessions.set(peerIdentity, session);
+
+    const myRaw = await crypto.subtle.exportKey("raw", this.identity.signingKeyPair.publicKey);
+    const safetyNumber = await computeIdentitySafetyNumber(myRaw, base64Decode(bundle.identity_key));
+    session.identitySafetyNumber = safetyNumber;
+    this.onIdentitySafetyNumber(peerIdentity, safetyNumber);
+
     return { session, freshInitialMessage: initialMessage };
   }
 
@@ -99,7 +113,20 @@ export class GroupE2EE {
     if (this.sessions.has(fromIdentity)) return; // already established, e.g. a duplicate retransmit
     const { sharedSecret, bootstrapDh } = await respondToSession(this.identity, initialMessage);
     const chain = await initTransportChain(sharedSecret, bootstrapDh);
-    this.sessions.set(fromIdentity, { chain });
+    const session = { chain };
+    this.sessions.set(fromIdentity, session);
+
+    // Note: this is computed over whatever identity_key the initiator
+    // claimed in their message, not independently re-verified against
+    // the server (see this module's audit notes). That's not a gap this
+    // safety number papers over -- it's exactly the case the safety
+    // number exists to catch: if this value doesn't match what the
+    // human on the other end expects, THAT mismatch is the signal that
+    // something substituted an identity somewhere in the chain.
+    const myRaw = await crypto.subtle.exportKey("raw", this.identity.signingKeyPair.publicKey);
+    const safetyNumber = await computeIdentitySafetyNumber(myRaw, base64Decode(initialMessage.identity_key));
+    session.identitySafetyNumber = safetyNumber;
+    this.onIdentitySafetyNumber(fromIdentity, safetyNumber);
   }
 
   /** Call on ParticipantConnected/ParticipantDisconnected (and once on

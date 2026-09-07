@@ -13,6 +13,7 @@ import {
   initiateSession,
   respondToSession,
   base64Encode,
+  computeIdentitySafetyNumber,
 } from "../signal-crypto.js";
 
 // Mimics what the auth-service actually does when serving GET
@@ -150,6 +151,59 @@ test("generateMoreOneTimePrekeys tops up the pool without disturbing existing ke
     [2, 3, 4]
   );
   assert.deepEqual(Array.from(identity.oneTimePrekeys.keys()).sort((a, b) => a - b), [0, 1, 2, 3, 4]);
+});
+
+test("computeIdentitySafetyNumber is symmetric regardless of argument order", async () => {
+  const alice = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const bob = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const aliceRaw = await crypto.subtle.exportKey("raw", alice.signingKeyPair.publicKey);
+  const bobRaw = await crypto.subtle.exportKey("raw", bob.signingKeyPair.publicKey);
+
+  const fromAlice = await computeIdentitySafetyNumber(aliceRaw, bobRaw);
+  const fromBob = await computeIdentitySafetyNumber(bobRaw, aliceRaw);
+  assert.equal(fromAlice, fromBob);
+});
+
+test("computeIdentitySafetyNumber differs for a different peer", async () => {
+  const alice = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const bob = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const carol = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const aliceRaw = await crypto.subtle.exportKey("raw", alice.signingKeyPair.publicKey);
+  const bobRaw = await crypto.subtle.exportKey("raw", bob.signingKeyPair.publicKey);
+  const carolRaw = await crypto.subtle.exportKey("raw", carol.signingKeyPair.publicKey);
+
+  const withBob = await computeIdentitySafetyNumber(aliceRaw, bobRaw);
+  const withCarol = await computeIdentitySafetyNumber(aliceRaw, carolRaw);
+  assert.notEqual(withBob, withCarol);
+});
+
+test("computeIdentitySafetyNumber is grouped and a fixed length", async () => {
+  const alice = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const bob = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const aliceRaw = await crypto.subtle.exportKey("raw", alice.signingKeyPair.publicKey);
+  const bobRaw = await crypto.subtle.exportKey("raw", bob.signingKeyPair.publicKey);
+
+  const sn = await computeIdentitySafetyNumber(aliceRaw, bobRaw);
+  assert.match(sn, /^[0-9a-f]{5}-[0-9a-f]{5}-[0-9a-f]{5}-[0-9a-f]{5}$/);
+});
+
+test("computeIdentitySafetyNumber rejects the wrong key length rather than silently hashing garbage", async () => {
+  const alice = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const aliceRaw = await crypto.subtle.exportKey("raw", alice.signingKeyPair.publicKey);
+  const wrongLength = new Uint8Array(16).buffer;
+
+  await assert.rejects(() => computeIdentitySafetyNumber(aliceRaw, wrongLength), /32-byte/);
+});
+
+test("computeIdentitySafetyNumber stays the same across repeated calls -- it does not depend on any session/room state", async () => {
+  const alice = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const bob = await generateIdentity({ oneTimePrekeyCount: 0 });
+  const aliceRaw = await crypto.subtle.exportKey("raw", alice.signingKeyPair.publicKey);
+  const bobRaw = await crypto.subtle.exportKey("raw", bob.signingKeyPair.publicKey);
+
+  const first = await computeIdentitySafetyNumber(aliceRaw, bobRaw);
+  const second = await computeIdentitySafetyNumber(aliceRaw, bobRaw);
+  assert.equal(first, second);
 });
 
 test("verifyBundle rejects a tampered signed_prekey even when called standalone", async () => {

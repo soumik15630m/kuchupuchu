@@ -101,6 +101,75 @@ async function hkdfSha256(ikm, info, outputBytes = 32) {
 // cross-protocol confusion).
 const X3DH_PREFIX = new Uint8Array(32).fill(0xff);
 
+/** A per-peer identity safety number -- deliberately distinct from
+ * double-ratchet.js's fingerprint(), which hashes the *current room
+ * key* and changes on every rotation. That's a useful check (do we
+ * currently agree on the same session key?) but it is NOT identity
+ * verification: it says nothing about whether the peer on the other
+ * end is who you think they are, and a party that fully controls
+ * bundle distribution (a compromised auth-service, which is exactly
+ * the threat X3DH exists to defend against) could in principle
+ * substitute identity keys on both sides of a call and still produce
+ * a matching room-key fingerprint, since that fingerprint never
+ * encodes identity at all.
+ *
+ * This does. It's derived only from the two Ed25519 identity signing
+ * keys -- stable for as long as neither device's identity key changes,
+ * independent of session/room-key rotation -- so it's the value
+ * actually worth reading out over a channel the server doesn't
+ * control (a phone call, in person) to confirm you're really talking
+ * to the device you think you are.
+ *
+ * Scope note, stated honestly: real Signal safety numbers stretch each
+ * key through many rounds of hashing specifically to raise the cost of
+ * pre-computing collisions at Signal's scale. This is a single SHA-256
+ * over the sorted, concatenated raw identity keys -- proportionate to
+ * this design's own stated threat model (§1's <=10-member allowlist),
+ * not a claim that it matches Signal's exact construction. What it
+ * does NOT do, and what remains a real open gap: this harness has no
+ * persistent storage (deliberately -- it's a throwaway test tool), so
+ * there's no cross-session pinning of "this device_id's identity key
+ * should always be X". A verified safety number today doesn't
+ * guarantee anything about tomorrow's session without that -- pinning
+ * belongs in a real client with real storage, not here. */
+export async function computeIdentitySafetyNumber(myIdentityKeyRaw, theirIdentityKeyRaw) {
+  const a = new Uint8Array(myIdentityKeyRaw);
+  const b = new Uint8Array(theirIdentityKeyRaw);
+  if (a.byteLength !== IDENTITY_KEY_BYTES || b.byteLength !== IDENTITY_KEY_BYTES) {
+    throw new Error("computeIdentitySafetyNumber expects two 32-byte Ed25519 public keys");
+  }
+
+  // Sorted so both parties compute the identical value regardless of
+  // which one is "me" and which is "them" -- lexicographic comparison
+  // of the raw bytes, first differing byte decides.
+  let ordered;
+  for (let i = 0; i < IDENTITY_KEY_BYTES; i++) {
+    if (a[i] !== b[i]) {
+      ordered = a[i] < b[i] ? concatBytes(a.buffer, b.buffer) : concatBytes(b.buffer, a.buffer);
+      break;
+    }
+  }
+  if (!ordered) {
+    // Byte-identical keys -- only possible if comparing an identity
+    // against itself, which a caller should never legitimately do, but
+    // concatenation order is moot either way if it happens.
+    ordered = concatBytes(a.buffer, b.buffer);
+  }
+
+  const digest = await crypto.subtle.digest("SHA-256", ordered);
+  const bytes = new Uint8Array(digest);
+  // 80 bits (20 hex chars), grouped for readability -- enough that
+  // brute-forcing a matching prefix isn't a realistic concern at this
+  // system's scale, short enough two people can actually read it aloud
+  // and compare over a phone call.
+  const hex = Array.from(bytes.slice(0, 10))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return hex.match(/.{1,5}/g).join("-");
+}
+
+const IDENTITY_KEY_BYTES = 32; // Ed25519 public key length
+
 /** Generates a brand-new device identity: a long-term Ed25519 signing
  * keypair, the X25519 identity-agreement keypair it cross-signs (see
  * 005_phase4_identity_dh_key.sql for why these are separate keys), one
