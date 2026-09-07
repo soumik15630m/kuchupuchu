@@ -69,6 +69,8 @@ export async function createE2eeWorker() {
 const { BaseKeyProvider } = LivekitClient;
 
 export class GroupKeyProvider extends BaseKeyProvider {
+  static KEYRING_SIZE = 4;
+
   constructor() {
     super({
       sharedKey: true,
@@ -77,15 +79,27 @@ export class GroupKeyProvider extends BaseKeyProvider {
       // second, uncoordinated key-evolution mechanism layered on top of
       // ours for no benefit, so it's turned off here.
       ratchetWindowSize: 0,
-      keyringSize: 4,
+      keyringSize: GroupKeyProvider.KEYRING_SIZE,
     });
   }
 
   /** Applies a freshly-rotated room key. `keyIndex` should be the same
    * generation counter group-e2ee.js's rotation protocol uses, so a
    * frame encrypted under generation N is never misinterpreted as
-   * belonging to generation N-1 or N+1 on the receiving end. */
-  async applyRoomKey(keyBytes, keyIndex) {
+   * belonging to generation N-1 or N+1 on the receiving end.
+   *
+   * `generation` itself is an ever-incrementing counter with no upper
+   * bound (a long call with many join/leave events will pass this well
+   * past keyringSize eventually), but LiveKit's keyring only has
+   * `KEYRING_SIZE` slots. Modulo-ing here is a defensive measure, not a
+   * verified requirement -- this file's header comment already flags
+   * that BaseKeyProvider's exact internal indexing behavior hasn't been
+   * confirmed against a real browser. If LiveKit already wraps
+   * internally, this is a harmless no-op; if it doesn't and expects the
+   * caller to stay in range, this is the fix that prevents an
+   * out-of-bounds keyIndex on a long-running call. */
+  async applyRoomKey(keyBytes, generation) {
+    const keyIndex = generation % GroupKeyProvider.KEYRING_SIZE;
     await this.onSetEncryptionKey(keyBytes, undefined, keyIndex);
   }
 }
