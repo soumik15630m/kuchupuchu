@@ -1,4 +1,4 @@
-FROM livekit/livekit-server:v1.7 AS livekit-src
+FROM livekit/livekit-server:v1.13.3 AS livekit-src
 FROM alpine:3.20
 RUN apk add --no-cache gettext libc6-compat \
     && adduser -D -u 10001 livekit
