@@ -76,6 +76,15 @@ def validate_signature(value: str) -> bytes:
     return _decode_fixed_length(value, ED25519_SIGNATURE_BYTES, "signature")
 
 
+def get_identity_email(device_id: str) -> str | None:
+    """The email a device's identity key was published under -- used to
+    validate a bundle-fetch URL's claimed owner actually matches, not
+    just that device_id happens to exist."""
+    db = get_db()
+    row = db.execute("SELECT email FROM identity_keys WHERE device_id = ?", (device_id,)).fetchone()
+    return row["email"] if row else None
+
+
 def get_identity_key(device_id: str) -> str | None:
     db = get_db()
     row = db.execute(
@@ -226,15 +235,21 @@ def unused_one_time_prekey_count(device_id: str) -> int:
 def _consume_one_time_prekey(device_id: str) -> dict | None:
     """Atomically claims the oldest unused one-time prekey for
     `device_id`, or returns None if the pool is empty (X3DH degrades
-    gracefully without one -- it just loses that extra DH term). The
-    UPDATE's WHERE-subquery pattern keeps the claim to a single statement
-    so two concurrent bundle fetches can't both walk away with the same
-    key -- SQLite serializes writes on this connection, so there's no
-    window between "pick a row" and "mark it used" for a second caller to
-    land in.
+    gracefully without one -- it just loses that extra DH term).
+
+    Uses RETURNING so the claim and the read of *which* row got claimed
+    happen as a single statement. An earlier version of this function
+    used a separate SELECT afterward to look up "the most recently used
+    row" -- which is not the same thing as "the row *this call* just
+    claimed": SQLite's datetime('now') only has 1-second resolution, so
+    two consumptions landing in the same second could tie, and the
+    separate SELECT could return a different concurrent caller's row
+    instead of this call's own. RETURNING removes that gap entirely --
+    there is no window between "pick a row" and "report which row was
+    picked" for a second caller to land in.
     """
     db = get_db()
-    cur = db.execute(
+    row = db.execute(
         """
         UPDATE one_time_prekeys
         SET used_at = datetime('now')
@@ -243,22 +258,13 @@ def _consume_one_time_prekey(device_id: str) -> dict | None:
             WHERE device_id = ? AND used_at IS NULL
             ORDER BY id ASC LIMIT 1
         )
-        """,
-        (device_id,),
-    )
-    if cur.rowcount == 0:
-        db.commit()
-        return None
-
-    row = db.execute(
-        """
-        SELECT key_id, public_key FROM one_time_prekeys
-        WHERE device_id = ? AND used_at IS NOT NULL
-        ORDER BY used_at DESC, id DESC LIMIT 1
+        RETURNING key_id, public_key
         """,
         (device_id,),
     ).fetchone()
     db.commit()
+    if row is None:
+        return None
     return {"key_id": row["key_id"], "public_key": row["public_key"]}
 
 

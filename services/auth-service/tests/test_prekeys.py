@@ -127,6 +127,28 @@ def test_changing_identity_dh_key_is_rejected(client, fresh_db):
     assert res.status_code == 409
 
 
+def test_bundle_fetch_with_mismatched_email_is_404(client, fresh_db):
+    """The email in GET /prekeys/{email}/{device_id} used to be pure
+    decoration -- any email string worked as long as device_id alone
+    resolved. This locks in that a genuine mismatch is rejected."""
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "eve@example.com", "dev-eve")
+    token_a = access_token_for("a@example.com", "dev-a")
+    token_eve = access_token_for("eve@example.com", "dev-eve")
+
+    identity_sk, identity_pub = _new_identity_key()
+    body = _publish_body(identity_sk, identity_pub)
+    client.post("/prekeys/me", json=body, headers={"Authorization": f"Bearer {token_a}"})
+
+    # Correct email still works.
+    res = client.get("/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {token_eve}"})
+    assert res.status_code == 200
+
+    # Wrong email for a real device_id is rejected, not silently served.
+    res = client.get("/prekeys/eve@example.com/dev-a", headers={"Authorization": f"Bearer {token_eve}"})
+    assert res.status_code == 404
+
+
 def test_bundle_fetch_for_unpublished_device_is_404(client, fresh_db):
     register_device(fresh_db, "a@example.com", "dev-a")
     token = access_token_for("a@example.com", "dev-a")
@@ -157,6 +179,39 @@ def test_one_time_prekeys_are_each_consumed_exactly_once(client, fresh_db):
     res = client.get("/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {token_b}"})
     assert res.status_code == 200
     assert res.json()["one_time_prekey"] is None
+
+
+def test_rapid_consumption_never_returns_the_same_one_time_prekey_twice(client, fresh_db):
+    """Regression test for a real concurrency bug: an earlier version of
+    _consume_one_time_prekey used a separate SELECT after the UPDATE to
+    look up "the most recently used row", instead of reading back what
+    the UPDATE itself just claimed. Because datetime('now') only has
+    1-second resolution, two consumptions landing in the same second
+    could tie, and the SELECT could return a different call's claimed
+    row -- so two rapid fetches could get told about the SAME key_id, or
+    a claimed row could go unreported. Ten rapid consumptions in a tight
+    loop reliably land within the same second, which is exactly the
+    condition that exposed it.
+    """
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
+    token_a = access_token_for("a@example.com", "dev-a")
+    token_b = access_token_for("b@example.com", "dev-b")
+
+    identity_sk, identity_pub = _new_identity_key()
+    body = _publish_body(identity_sk, identity_pub, num_one_time=10)
+    client.post("/prekeys/me", json=body, headers={"Authorization": f"Bearer {token_a}"})
+
+    seen_key_ids = []
+    for _ in range(10):
+        res = client.get("/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {token_b}"})
+        one_time = res.json()["one_time_prekey"]
+        assert one_time is not None
+        seen_key_ids.append(one_time["key_id"])
+
+    assert sorted(seen_key_ids) == list(range(10)), (
+        f"expected each of the 10 one-time prekeys exactly once, got {seen_key_ids}"
+    )
 
 
 def test_signed_prekey_with_wrong_signature_is_rejected(client, fresh_db):
