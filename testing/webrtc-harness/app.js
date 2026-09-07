@@ -345,10 +345,16 @@ async function connect() {
 
   if (e2eeWorker) {
     await room.setE2EEEnabled(true);
-    room.on(RoomEvent.ParticipantConnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
-    room.on(RoomEvent.ParticipantDisconnected, () => e2ee?.onMembershipChanged(currentRoomMembership()));
+    room.on(RoomEvent.ParticipantConnected, () => {
+      e2ee?.onMembershipChanged(currentRoomMembership()).catch((err) => log(`E2EE: membership-change handling failed: ${err.message}`));
+    });
+    room.on(RoomEvent.ParticipantDisconnected, () => {
+      e2ee?.onMembershipChanged(currentRoomMembership()).catch((err) => log(`E2EE: membership-change handling failed: ${err.message}`));
+    });
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (topic === DATA_TOPIC && participant) e2ee?.handleDataMessage(payload, participant.identity);
+      if (topic === DATA_TOPIC && participant) {
+        e2ee?.handleDataMessage(payload, participant.identity).catch((err) => log(`E2EE: data-message handling failed: ${err.message}`));
+      }
     });
   }
 
