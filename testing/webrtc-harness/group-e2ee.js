@@ -130,8 +130,17 @@ export class GroupE2EE {
 
   async _rotate(participants) {
     const roomKey = crypto.getRandomValues(new Uint8Array(32));
-    this.generation++;
-    const gen = this.generation;
+    // Compute the candidate generation locally and only commit it to
+    // this.generation once the whole rotation actually succeeds. An
+    // earlier version incremented this.generation up front -- if
+    // anything in the loop below threw (a peer's fetchBundle failing,
+    // a roster lookup failing), the counter had already moved past a
+    // generation nothing was ever distributed or applied for, and nobody
+    // would retry it. Session establishment and data-channel sends are
+    // exactly the kind of thing that can fail on one peer without
+    // warning (see fetchBundle in app.js) -- this needs to be resilient
+    // to that, not just to the happy path.
+    const gen = this.generation + 1;
     const ad = new TextEncoder().encode(`generation:${gen}`);
 
     const others = participants.map((p) => p.identity).filter((id) => id !== this.myDeviceIdentity);
@@ -157,6 +166,7 @@ export class GroupE2EE {
     }
 
     await this.keyProvider.applyRoomKey(roomKey, gen);
+    this.generation = gen;
     const fp = await fingerprint(roomKey);
     this.convergence.setOwnFingerprint(fp);
     this.onFingerprintChanged(fp, gen);
@@ -203,7 +213,18 @@ export class GroupE2EE {
       this.generation = msg.generation;
       await this.keyProvider.applyRoomKey(roomKey, msg.generation);
       const fp = await fingerprint(roomKey);
-      this.convergence = this.convergence?.generation === msg.generation ? this.convergence : new FingerprintConvergence(msg.generation, 1);
+      if (this.convergence?.generation !== msg.generation) {
+        // Mirrors _rotate()'s own calculation -- everyone except
+        // ourselves. Hardcoding this to 1 (an earlier version did) is
+        // only correct for a 2-person call; with 3+ participants a
+        // non-rotator would declare "converged" after hearing from just
+        // one other peer instead of comparing against everyone, missing
+        // a genuine mismatch with a third or fourth participant.
+        const expectedPeerCount = this.lastParticipants
+          ? this.lastParticipants.filter((p) => p.identity !== this.myDeviceIdentity).length
+          : 1;
+        this.convergence = new FingerprintConvergence(msg.generation, expectedPeerCount);
+      }
       this.convergence.setOwnFingerprint(fp);
       this.onFingerprintChanged(fp, msg.generation);
       this.sendData(textEncode({ type: "fingerprint", from: this.myDeviceIdentity, generation: msg.generation, fingerprint: fp }));
