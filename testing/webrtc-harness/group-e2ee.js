@@ -68,6 +68,18 @@ export class GroupE2EE {
     this.convergence = null;
     this.lastParticipants = null;
     this.lastParticipantIdentities = null;
+    // The rotator (only) holds onto the current room key so it can be
+    // re-delivered to a single peer whose session state was lost --
+    // e.g. that peer reconnected on its own, wiping its in-memory
+    // GroupE2EE instance, while we (the rotator) didn't. Without this,
+    // that peer would be stuck needing a full re-rotation (triggered by
+    // some unrelated membership change) just to recover from its own
+    // reconnect. See handleDataMessage's "session-reset" handling.
+    this.currentRoomKey = null;
+    // Tracks in-flight session-reset requests we've sent, so a peer that
+    // never responds doesn't leave us waiting forever -- see
+    // _requestSessionReset.
+    this._pendingSessionResets = new Map(); // peerIdentity -> timeout id
   }
 
   async initialize(myDeviceIdentity, existingIdentity = null) {
@@ -150,9 +162,40 @@ export class GroupE2EE {
     this.lastParticipantIdentities = key;
 
     this.lastParticipants = participants;
+    // If a room-key message already arrived and created a
+    // FingerprintConvergence before we'd ever called this function
+    // ourselves (data messages and room-membership sync are different
+    // subsystems -- this ordering is a real possibility, not just a
+    // test artifact), that convergence was sized from a fallback
+    // guess. Correct it now that we actually know the real count,
+    // rather than leaving a wrong expectedPeerCount in place for the
+    // rest of that generation's convergence check.
+    if (this.convergence) {
+      this.convergence.expectedPeerCount = participants.filter((p) => p.identity !== this.myDeviceIdentity).length;
+    }
     const rotator = electRotator(participants);
     if (rotator !== this.myDeviceIdentity) return;
     await this._rotate(participants);
+  }
+
+  async _sealAndSendRoomKey(peerIdentity, roomKey, gen) {
+    const { session, freshInitialMessage } = await this._ensureSession(peerIdentity);
+    const key = await session.chain.keyForGeneration(gen);
+    const ad = new TextEncoder().encode(`generation:${gen}`);
+    const { iv, ciphertext } = await seal(key, roomKey, ad);
+
+    this.sendData(
+      textEncode({
+        type: "room-key",
+        from: this.myDeviceIdentity,
+        to: peerIdentity,
+        generation: gen,
+        iv: base64Encode(iv),
+        ciphertext: base64Encode(ciphertext),
+        x3dhInit: freshInitialMessage,
+      }),
+      [peerIdentity]
+    );
   }
 
   async _rotate(participants) {
@@ -168,36 +211,46 @@ export class GroupE2EE {
     // warning (see fetchBundle in app.js) -- this needs to be resilient
     // to that, not just to the happy path.
     const gen = this.generation + 1;
-    const ad = new TextEncoder().encode(`generation:${gen}`);
 
     const others = participants.map((p) => p.identity).filter((id) => id !== this.myDeviceIdentity);
     this.convergence = new FingerprintConvergence(gen, others.length);
 
     for (const peerIdentity of others) {
-      const { session, freshInitialMessage } = await this._ensureSession(peerIdentity);
-      const key = await session.chain.keyForGeneration(gen);
-      const { iv, ciphertext } = await seal(key, roomKey, ad);
-
-      this.sendData(
-        textEncode({
-          type: "room-key",
-          from: this.myDeviceIdentity,
-          to: peerIdentity,
-          generation: gen,
-          iv: base64Encode(iv),
-          ciphertext: base64Encode(ciphertext),
-          x3dhInit: freshInitialMessage,
-        }),
-        [peerIdentity]
-      );
+      await this._sealAndSendRoomKey(peerIdentity, roomKey, gen);
     }
 
     await this.keyProvider.applyRoomKey(roomKey, gen);
     this.generation = gen;
+    this.currentRoomKey = roomKey;
     const fp = await fingerprint(roomKey);
     this.convergence.setOwnFingerprint(fp);
     this.onFingerprintChanged(fp, gen);
     this.sendData(textEncode({ type: "fingerprint", from: this.myDeviceIdentity, generation: gen, fingerprint: fp }));
+  }
+
+  /** Asks `peerIdentity` to drop whatever stale session it has for us and
+   * re-establish, then re-delivers the current room key. Called when we
+   * receive a room-key message we can't decrypt (see handleDataMessage)
+   * -- almost always because the SENDER (the rotator) still has a
+   * session cached for us from before we reconnected and lost ours.
+   * Times out to onRejoinNeeded() if the rotator never responds, rather
+   * than waiting forever with no feedback. */
+  _requestSessionReset(rotatorIdentity) {
+    if (this._pendingSessionResets.has(rotatorIdentity)) return; // already waiting
+    this.sendData(textEncode({ type: "session-reset", from: this.myDeviceIdentity, to: rotatorIdentity }));
+    const timeoutId = setTimeout(() => {
+      this._pendingSessionResets.delete(rotatorIdentity);
+      this.onRejoinNeeded();
+    }, 5000);
+    this._pendingSessionResets.set(rotatorIdentity, timeoutId);
+  }
+
+  _clearPendingSessionReset(peerIdentity) {
+    const timeoutId = this._pendingSessionResets.get(peerIdentity);
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+      this._pendingSessionResets.delete(peerIdentity);
+    }
   }
 
   /** Call with every payload received via RoomEvent.DataReceived on
@@ -212,11 +265,12 @@ export class GroupE2EE {
       const session = this.sessions.get(fromIdentity);
       if (!session) {
         // We have no session with this peer and they didn't send us one
-        // to bootstrap from -- nothing to decrypt with. This shouldn't
-        // happen in normal operation; surfacing it as a rejoin prompt is
-        // the right call per this module's header comment (no silent
-        // "just wait and hope" fallback).
-        this.onRejoinNeeded();
+        // to bootstrap from -- almost always because THEY (the rotator)
+        // still have a session cached for us from before we reconnected
+        // and lost ours. Ask them to reset rather than sitting stuck
+        // until some unrelated membership change happens to trigger a
+        // fresh rotation.
+        this._requestSessionReset(fromIdentity);
         return;
       }
 
@@ -224,6 +278,10 @@ export class GroupE2EE {
       try {
         key = await session.chain.keyForGeneration(msg.generation);
       } catch {
+        // Our chain has already advanced past this generation (stale
+        // message) or something else is genuinely desynced -- a session
+        // reset can't fix a chain that's moved forward, only a missing
+        // session. This is the case onRejoinNeeded is actually for.
         this.onRejoinNeeded();
         return;
       }
@@ -237,6 +295,7 @@ export class GroupE2EE {
         return;
       }
 
+      this._clearPendingSessionReset(fromIdentity);
       this.generation = msg.generation;
       await this.keyProvider.applyRoomKey(roomKey, msg.generation);
       const fp = await fingerprint(roomKey);
@@ -255,6 +314,24 @@ export class GroupE2EE {
       this.convergence.setOwnFingerprint(fp);
       this.onFingerprintChanged(fp, msg.generation);
       this.sendData(textEncode({ type: "fingerprint", from: this.myDeviceIdentity, generation: msg.generation, fingerprint: fp }));
+      return;
+    }
+
+    if (msg.type === "session-reset" && msg.to === this.myDeviceIdentity) {
+      // fromIdentity's session with us is gone on their end (a lone
+      // reconnect wiped their in-memory state) -- ours might still be
+      // cached from before they reconnected, but it's now one-sided and
+      // useless: we'd derive keys they can no longer reproduce. Drop it
+      // so _ensureSession generates a fresh x3dhInit, then re-deliver
+      // whatever room key we're currently holding so they recover
+      // without needing a full new rotation. Only meaningful if we're
+      // actually holding a room key to redeliver -- if we're not the
+      // rotator (or haven't rotated yet), there's nothing to resend and
+      // the requester's own timeout will surface a rejoin prompt.
+      this.sessions.delete(fromIdentity);
+      if (this.currentRoomKey !== null) {
+        await this._sealAndSendRoomKey(fromIdentity, this.currentRoomKey, this.generation);
+      }
       return;
     }
 
