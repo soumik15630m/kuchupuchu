@@ -18,6 +18,7 @@ from app.prekeys import (
     NoIdentityKeyError,
     add_one_time_prekeys,
     get_bundle,
+    get_identity_email,
     unused_one_time_prekey_count,
     upload_identity_dh_key,
     upload_identity_key,
@@ -150,6 +151,16 @@ def publish_bundle(body: PublishBundleIn, authorization: str | None = Header(def
 @router.get("/{email}/{device_id}")
 def fetch_bundle(email: str, device_id: str, authorization: str | None = Header(default=None)):
     require_active_device(authorization)
+
+    # email was previously accepted but never checked against anything --
+    # any (email, device_id) pair worked as long as device_id alone
+    # resolved, making the email component of the URL purely decorative
+    # despite implying it was validated. 404 rather than 403 on a
+    # mismatch so this doesn't confirm/deny whether device_id exists
+    # under some *other* email to a caller probing with the wrong one.
+    actual_email = get_identity_email(device_id)
+    if actual_email is None or actual_email != email:
+        raise HTTPException(status_code=404, detail="no prekey bundle published for this device")
 
     bundle = get_bundle(device_id)
     if bundle is None:
