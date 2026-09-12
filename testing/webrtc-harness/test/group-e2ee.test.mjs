@@ -23,6 +23,8 @@ class FakeRoom {
     this.devices = new Map(); // identity -> GroupE2EE instance
     this.publishedBundles = new Map(); // identity -> bundle
     this.keyProviders = new Map(); // identity -> FakeKeyProvider
+    this.fetchFailuresRemaining = new Map(); // identity -> count of times to fail before succeeding
+    this.permanentlyUnreachable = new Set(); // identities whose bundle fetch always fails
   }
 
   makeSendData(identity) {
@@ -40,6 +42,14 @@ class FakeRoom {
   }
 
   async fetchBundle(_email, deviceId) {
+    if (this.permanentlyUnreachable.has(deviceId)) {
+      throw new Error(`prekey bundle fetch failed for ${deviceId}: 404`);
+    }
+    const remaining = this.fetchFailuresRemaining.get(deviceId) ?? 0;
+    if (remaining > 0) {
+      this.fetchFailuresRemaining.set(deviceId, remaining - 1);
+      throw new Error(`prekey bundle fetch failed for ${deviceId}: 404`);
+    }
     const bundle = this.publishedBundles.get(deviceId);
     if (!bundle) throw new Error(`no bundle published for ${deviceId}`);
     return bundle;
@@ -55,7 +65,10 @@ class FakeRoom {
    * (a brand new instance, as a real page reload/reconnect produces) --
    * pass `existingIdentity` to simulate the identity-caching fix
    * (app.js's cachedCryptoIdentity) persisting across that reconnect. */
-  async addOrReconnectDevice(identity, { existingIdentity = null, onFingerprintChanged, onRejoinNeeded } = {}) {
+  async addOrReconnectDevice(
+    identity,
+    { existingIdentity = null, onFingerprintChanged, onRejoinNeeded, onPartialRotationFailure } = {}
+  ) {
     const keyProvider = new FakeKeyProvider();
     this.keyProviders.set(identity, keyProvider);
 
@@ -66,6 +79,11 @@ class FakeRoom {
       emailForIdentity: (id) => this.emailForIdentity(id),
       onFingerprintChanged: onFingerprintChanged ?? (() => {}),
       onRejoinNeeded: onRejoinNeeded ?? (() => {}),
+      onPartialRotationFailure: onPartialRotationFailure ?? (() => {}),
+      // Real delays are 400/900/1800ms -- tests use near-zero delays so
+      // they run fast while still exercising the actual retry loop
+      // (same code path, same attempt count, just not waiting around).
+      bundleFetchRetryDelaysMs: [1, 1, 1],
     });
 
     const publishPayload = await e2ee.initialize(identity, existingIdentity);
@@ -194,4 +212,50 @@ test("three-device group: a non-rotator's convergence check waits for every peer
   const nonRotatorId = ["dev-b", "dev-c"].find((id) => id !== "dev-a");
   const nonRotator = room.devices.get(nonRotatorId);
   assert.equal(nonRotator.convergence.expectedPeerCount, 2);
+});
+
+test("a transient bundle-fetch race (peer hasn't published yet) recovers via retry, not a broken rotation", async () => {
+  const room = new FakeRoom();
+  const fingerprints = { a: null, b: null };
+
+  await room.addOrReconnectDevice("dev-a", { onFingerprintChanged: (fp) => (fingerprints.a = fp) });
+  await room.addOrReconnectDevice("dev-b", { onFingerprintChanged: (fp) => (fingerprints.b = fp) });
+
+  // Simulate exactly what happened in real testing: dev-a tries to
+  // fetch dev-b's bundle before dev-b's publish has "landed" -- the
+  // first two attempts 404, the third (and real retries after it)
+  // succeed once the publish has caught up.
+  room.fetchFailuresRemaining.set("dev-b", 2);
+
+  await room.devices.get("dev-a").onMembershipChanged(room.currentParticipants());
+  await room.devices.get("dev-b").onMembershipChanged(room.currentParticipants());
+  await waitForMicrotasks(30);
+
+  assert.ok(fingerprints.a, "dev-a should have recovered and completed rotation despite the transient failure");
+  assert.equal(fingerprints.a, fingerprints.b);
+});
+
+test("a peer that never comes back doesn't block the room key from reaching everyone else", async () => {
+  const room = new FakeRoom();
+  const fingerprints = { a: null, b: null, c: null };
+  const partialFailures = [];
+
+  await room.addOrReconnectDevice("dev-a", {
+    onFingerprintChanged: (fp) => (fingerprints.a = fp),
+    onPartialRotationFailure: (unreached) => partialFailures.push(unreached),
+  });
+  await room.addOrReconnectDevice("dev-b", { onFingerprintChanged: (fp) => (fingerprints.b = fp) });
+  await room.addOrReconnectDevice("dev-c", { onFingerprintChanged: (fp) => (fingerprints.c = fp) });
+
+  room.permanentlyUnreachable.add("dev-c"); // e.g. dev-c's own publish is broken and never succeeds
+
+  for (const id of ["dev-a", "dev-b", "dev-c"]) {
+    await room.devices.get(id).onMembershipChanged(room.currentParticipants());
+  }
+  await waitForMicrotasks(30);
+
+  assert.ok(fingerprints.a, "dev-a (the rotator) should still complete its own key application");
+  assert.equal(fingerprints.a, fingerprints.b, "dev-b, who IS reachable, should still get the room key");
+  assert.equal(fingerprints.c, null, "dev-c never received a working room-key message, as expected");
+  assert.deepEqual(partialFailures, [["dev-c"]], "the rotator should be told which peer(s) it couldn't reach");
 });

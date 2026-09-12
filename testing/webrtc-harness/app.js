@@ -120,6 +120,9 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
       updateSafetyNumberUi(peerIdentity, safetyNumber);
     },
     onRejoinNeeded: showRejoinPrompt,
+    onPartialRotationFailure: (unreachedPeerIdentities) => {
+      log(`E2EE: room key delivered, but couldn't reach ${unreachedPeerIdentities.join(", ")} yet (will recover automatically once reachable)`);
+    },
   });
 
   // currentDeviceId() only returns the real identity once room.connect()
@@ -478,7 +481,22 @@ async function connect() {
   log("connected as", room.localParticipant.identity);
   if (e2eeWorker) {
     const e2eeReady = await publishPrekeysAndStartE2ee(keyProvider);
-    if (e2eeReady) await e2ee.onMembershipChanged(currentRoomMembership());
+    if (e2eeReady) {
+      try {
+        await e2ee.onMembershipChanged(currentRoomMembership());
+      } catch (err) {
+        // The call itself is already connected and working at this
+        // point (media negotiated, quality reporting underway) -- an
+        // E2EE setup hiccup here is a separate, narrower problem than
+        // "the connection failed", and letting it propagate up to the
+        // outer try/catch would misleadingly log it as exactly that.
+        // _rotate()'s own per-peer retry/resilience (see group-e2ee.js)
+        // handles the common transient case (a peer's bundle not
+        // published yet); this catch is the backstop for whatever gets
+        // past that.
+        log(`E2EE: initial setup failed (${err.message}) — call continues, E2EE may not be established yet`);
+      }
+    }
   }
 
   setInterval(async () => {

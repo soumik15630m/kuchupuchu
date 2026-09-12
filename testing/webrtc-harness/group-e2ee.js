@@ -50,8 +50,23 @@ export class GroupE2EE {
    *   signal-crypto.js's computeIdentitySafetyNumber for why the two
    *   are not the same thing.
    * @param {() => void} [deps.onRejoinNeeded] - §6.1: called when a mismatch survives one retry.
+   * @param {(unreachedPeerIdentities: string[]) => void} [deps.onPartialRotationFailure]
+   *   Called when a rotation succeeded overall but one or more peers
+   *   couldn't be reached (bundle fetch failed even after retry). The
+   *   call itself is fine -- this is informational, not an error to
+   *   surface as "connection failed".
    */
-  constructor({ keyProvider, sendData, fetchBundle, emailForIdentity, onFingerprintChanged, onIdentitySafetyNumber, onRejoinNeeded }) {
+  constructor({
+    keyProvider,
+    sendData,
+    fetchBundle,
+    emailForIdentity,
+    onFingerprintChanged,
+    onIdentitySafetyNumber,
+    onRejoinNeeded,
+    onPartialRotationFailure,
+    bundleFetchRetryDelaysMs = [400, 900, 1800],
+  }) {
     this.keyProvider = keyProvider;
     this.sendData = sendData;
     this.fetchBundle = fetchBundle;
@@ -59,6 +74,8 @@ export class GroupE2EE {
     this.onFingerprintChanged = onFingerprintChanged ?? (() => {});
     this.onIdentitySafetyNumber = onIdentitySafetyNumber ?? (() => {});
     this.onRejoinNeeded = onRejoinNeeded ?? (() => {});
+    this.onPartialRotationFailure = onPartialRotationFailure ?? (() => {});
+    this._bundleFetchRetryDelaysMs = bundleFetchRetryDelaysMs;
 
     this.identity = null;
     this.myDeviceIdentity = null;
@@ -102,12 +119,37 @@ export class GroupE2EE {
     return generateMoreOneTimePrekeys(this.identity, ONE_TIME_PREKEY_TOP_UP_COUNT);
   }
 
+  async _fetchBundleWithRetry(email, peerIdentity) {
+    // Room membership (LiveKit signaling) and prekey publishing (a
+    // separate HTTP call this module has no visibility into) aren't
+    // synchronized with each other -- seeing a peer show up in the room
+    // doesn't mean their bundle has landed on the server yet. A 404
+    // right after someone joins is very often exactly that race, not a
+    // real failure, and treating it as fatal on the first try (an
+    // earlier version did) meant a rotation attempt could fail outright
+    // just because it happened to run a few hundred milliseconds too
+    // early.
+    const delaysMs = this._bundleFetchRetryDelaysMs;
+    let lastError;
+    for (let attempt = 0; attempt <= delaysMs.length; attempt++) {
+      try {
+        return await this.fetchBundle(email, peerIdentity);
+      } catch (err) {
+        lastError = err;
+        if (attempt < delaysMs.length) {
+          await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+        }
+      }
+    }
+    throw lastError;
+  }
+
   async _ensureSession(peerIdentity) {
     const existing = this.sessions.get(peerIdentity);
     if (existing) return { session: existing, freshInitialMessage: null };
 
     const email = this.emailForIdentity(peerIdentity);
-    const bundle = await this.fetchBundle(email, peerIdentity);
+    const bundle = await this._fetchBundleWithRetry(email, peerIdentity);
     const { sharedSecret, bootstrapDh, initialMessage } = await initiateSession(this.identity, bundle);
     const chain = await initTransportChain(sharedSecret, bootstrapDh);
     const session = { chain };
@@ -215,8 +257,22 @@ export class GroupE2EE {
     const others = participants.map((p) => p.identity).filter((id) => id !== this.myDeviceIdentity);
     this.convergence = new FingerprintConvergence(gen, others.length);
 
+    const failures = [];
     for (const peerIdentity of others) {
-      await this._sealAndSendRoomKey(peerIdentity, roomKey, gen);
+      try {
+        await this._sealAndSendRoomKey(peerIdentity, roomKey, gen);
+      } catch (err) {
+        // One peer's bundle-fetch retries all failing (or any other
+        // per-peer error) shouldn't stop delivery to everyone else --
+        // in a group call that would mean one slow/unreachable peer
+        // silently locks the other N-1 people out of the whole
+        // rotation. Collect failures and keep going; the peer that
+        // failed just won't have this generation's key yet, which is
+        // the same recoverable state a lone reconnect leaves someone
+        // in (handled by the session-reset path once they do get a
+        // room-key message).
+        failures.push({ peerIdentity, err });
+      }
     }
 
     await this.keyProvider.applyRoomKey(roomKey, gen);
@@ -226,6 +282,13 @@ export class GroupE2EE {
     this.convergence.setOwnFingerprint(fp);
     this.onFingerprintChanged(fp, gen);
     this.sendData(textEncode({ type: "fingerprint", from: this.myDeviceIdentity, generation: gen, fingerprint: fp }));
+
+    if (failures.length > 0) {
+      // Not re-thrown -- the rotation as a whole succeeded (everyone
+      // reachable got the new key); this is reported so app.js can log
+      // it without it reading as "the call is broken", which it isn't.
+      this.onPartialRotationFailure(failures.map((f) => f.peerIdentity));
+    }
   }
 
   /** Asks `peerIdentity` to drop whatever stale session it has for us and
