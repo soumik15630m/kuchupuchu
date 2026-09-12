@@ -8,6 +8,30 @@ from datetime import timedelta
 from livekit import api
 
 
+def _credentials_ttl_minutes() -> int:
+    """Shared TTL for both the room token and TURN credentials (§9) --
+    one knob, not two, so they can't drift out of sync with each other.
+    If TURN credentials expired mid-call while the room token was still
+    valid (or vice versa), that's a connection that mysteriously breaks
+    partway through rather than a clean up-front failure.
+
+    Defaults to 10 minutes ("just long enough to connect" -- the
+    original comment this replaced). ROOM_TOKEN_TTL_MINUTES exists
+    purely as a testing knob (§13) for scenarios where re-minting every
+    10 minutes gets in the way of a longer manual test session -- not
+    something to raise in a real deployment without reconsidering why
+    short-lived credentials (§9) were the choice in the first place.
+    """
+    raw = os.environ.get("ROOM_TOKEN_TTL_MINUTES", "10")
+    try:
+        minutes = int(raw)
+    except ValueError:
+        raise ValueError(f"ROOM_TOKEN_TTL_MINUTES must be an integer number of minutes, got {raw!r}")
+    if minutes <= 0:
+        raise ValueError(f"ROOM_TOKEN_TTL_MINUTES must be positive, got {minutes}")
+    return minutes
+
+
 def mint_room_token(device_id: str, email: str, room_name: str) -> str:
     """Short-lived, room-scoped JWT room tokens (§9) — not static shared
     credentials. §4's concurrency gate (max 5) is enforced server-side by
@@ -26,7 +50,7 @@ def mint_room_token(device_id: str, email: str, room_name: str) -> str:
         api.AccessToken(os.environ["LIVEKIT_API_KEY"], os.environ["LIVEKIT_API_SECRET"])
         .with_identity(device_id)
         .with_name(email)
-        .with_ttl(timedelta(minutes=10))  # just long enough to connect
+        .with_ttl(timedelta(minutes=_credentials_ttl_minutes()))
         .with_grants(
             api.VideoGrants(
                 room_join=True,
@@ -49,7 +73,7 @@ def mint_turn_credentials(device_id: str) -> dict:
     email into their own browser's webrtc-internals and coturn's access logs.
     """
     secret = os.environ["TURN_SHARED_SECRET"]
-    ttl_seconds = 600  # 10 min — same order as the room token above
+    ttl_seconds = _credentials_ttl_minutes() * 60  # matches the room token's TTL, see _credentials_ttl_minutes
     expiry = int(time.time()) + ttl_seconds
     username = f"{expiry}:{device_id}"
     password = base64.b64encode(
