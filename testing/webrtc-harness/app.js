@@ -375,6 +375,19 @@ async function connect() {
         e2ee?.handleDataMessage(payload, participant.identity).catch((err) => log(`E2EE: data-message handling failed: ${err.message}`));
       }
     });
+    room.on(RoomEvent.EncryptionError, (error) => {
+      // The direct signal for "the room key matched at the protocol
+      // level (fingerprints agree) but frame decryption is still
+      // failing" -- as opposed to inferring it from silent/garbled
+      // media, which is what prompted adding this listener in the
+      // first place. LiveKit's own SDK has an open issue
+      // (client-sdk-js#1722) where error.participantIdentity is often
+      // undefined even though the underlying CryptorError knows it --
+      // logging the whole error object is a deliberate hedge against
+      // that gap, since the message/name may carry information the
+      // structured field doesn't yet expose in this SDK version.
+      log(`E2EE: EncryptionError -- ${error.name ?? "unknown"}: ${error.message ?? JSON.stringify(error)}`);
+    });
   }
 
   room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
