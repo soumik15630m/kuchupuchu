@@ -275,7 +275,7 @@ export class GroupE2EE {
       }
     }
 
-    await this.keyProvider.applyRoomKey(roomKey, gen, others);
+    await this.keyProvider.applyRoomKey(roomKey, gen, [this.myDeviceIdentity, ...others]);
     this.generation = gen;
     this.currentRoomKey = roomKey;
     const fp = await fingerprint(roomKey);
@@ -360,10 +360,10 @@ export class GroupE2EE {
 
       this._clearPendingSessionReset(fromIdentity);
       this.generation = msg.generation;
-      const knownPeers = this.lastParticipants
+      const otherPeers = this.lastParticipants
         ? this.lastParticipants.map((p) => p.identity).filter((id) => id !== this.myDeviceIdentity)
         : [fromIdentity];
-      await this.keyProvider.applyRoomKey(roomKey, msg.generation, knownPeers);
+      await this.keyProvider.applyRoomKey(roomKey, msg.generation, [this.myDeviceIdentity, ...otherPeers]);
       const fp = await fingerprint(roomKey);
       if (this.convergence?.generation !== msg.generation) {
         // Mirrors _rotate()'s own calculation -- everyone except

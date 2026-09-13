@@ -89,32 +89,17 @@ export class GroupKeyProvider extends BaseKeyProvider {
    * belonging to generation N-1 or N+1 on the receiving end.
    *
    * `participantIdentities` -- registers the SAME key explicitly under
-   * every known participant identity, not just once with an undefined
-   * identity. This is a hedge against genuine uncertainty, stated
-   * honestly: LiveKit's documented pattern for per-participant keys is
-   * `setKey(key, participantId)`, and even its shared-key examples pass
-   * the key via a constructor option or dedicated method rather than
-   * `onSetEncryptionKey(key, undefined, index)`. It's plausible
-   * `sharedKey: true` only governs how THIS client encrypts what it
-   * sends, without automatically registering that key for decrypting
-   * every remote participant's incoming frames -- which would produce
-   * exactly "track subscribes fine, but plays back as nothing" (frame
-   * decryption failing silently for a sender whose identity was never
-   * explicitly registered). Calling this redundantly per identity is
-   * harmless if sharedKey:true already covers it; it's the fix if it
-   * doesn't. Unconfirmed against a real browser either way -- if audio
-   * still doesn't play after this, the next thing to check is
-   * RoomEvent.EncryptionError in devtools, which reports decryption
-   * failures directly.
-   *
-   * `generation` itself is an ever-incrementing counter with no upper
-   * bound (a long call with many join/leave events will pass this well
-   * past keyringSize eventually), but LiveKit's keyring only has
-   * `KEYRING_SIZE` slots. Modulo-ing here is a defensive measure, not a
-   * verified requirement -- if LiveKit already wraps internally, this
-   * is a harmless no-op; if it doesn't and expects the caller to stay
-   * in range, this is the fix that prevents an out-of-bounds keyIndex
-   * on a long-running call. */
+   * every known participant identity, INCLUDING YOUR OWN. Confirmed
+   * empirically, not just theorized: an earlier version only registered
+   * the key for `undefined` plus other peers, which produced this exact
+   * real error from LiveKit's own encoder -- `MissingKey: key set not
+   * found for dev-a at index 0`, reported by dev-a's own client, for
+   * dev-a's own identity. The local encoder (encrypting what THIS client
+   * sends) looks up its key by its own identity specifically, same as a
+   * remote decoder does for each sender -- `sharedKey: true` and the
+   * `undefined`-identity call do not cover that on their own. Callers of
+   * this method (group-e2ee.js) must include their own identity in
+   * `participantIdentities`, not just "everyone else". */
   async applyRoomKey(keyBytes, generation, participantIdentities = []) {
     const keyIndex = generation % GroupKeyProvider.KEYRING_SIZE;
     await this.onSetEncryptionKey(keyBytes, undefined, keyIndex);
