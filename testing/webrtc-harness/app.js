@@ -466,6 +466,36 @@ async function connect() {
     throw err;
   }
   log(`connect() resolved in ${Math.round(performance.now() - startedAt)}ms`);
+  log("connected as", room.localParticipant.identity);
+
+  if (e2eeWorker) {
+    // This has to happen BEFORE enableCameraAndMicrophone() below, not
+    // after. An earlier version did E2EE setup second, which produced a
+    // real, reproducible bug: the local track's frame-cryptor gets
+    // created at publish time, and if no key exists yet at that moment,
+    // frames start encoding with MissingKey errors that persist even
+    // after applyRoomKey() later succeeds -- the already-created cryptor
+    // doesn't retroactively pick up a key that didn't exist when it was
+    // set up. Establishing the key first means the cryptor is created
+    // with a real key already in place from the start.
+    const e2eeReady = await publishPrekeysAndStartE2ee(keyProvider);
+    if (e2eeReady) {
+      try {
+        await e2ee.onMembershipChanged(currentRoomMembership());
+      } catch (err) {
+        // The call itself is already connected and working at this
+        // point (media negotiated, quality reporting underway) -- an
+        // E2EE setup hiccup here is a separate, narrower problem than
+        // "the connection failed", and letting it propagate up to the
+        // outer try/catch would misleadingly log it as exactly that.
+        // _rotate()'s own per-peer retry/resilience (see group-e2ee.js)
+        // handles the common transient case (a peer's bundle not
+        // published yet); this catch is the backstop for whatever gets
+        // past that.
+        log(`E2EE: initial setup failed (${err.message}) — call continues, E2EE may not be established yet`);
+      }
+    }
+  }
 
   try {
     await room.localParticipant.enableCameraAndMicrophone();
@@ -488,27 +518,6 @@ async function connect() {
       await room.localParticipant.setMicrophoneEnabled(true);
     } catch (micErr) {
       log(`microphone track-publish also failed (${micErr.name ?? "Error"}: ${micErr.message}) — continuing with no local media`);
-    }
-  }
-
-  log("connected as", room.localParticipant.identity);
-  if (e2eeWorker) {
-    const e2eeReady = await publishPrekeysAndStartE2ee(keyProvider);
-    if (e2eeReady) {
-      try {
-        await e2ee.onMembershipChanged(currentRoomMembership());
-      } catch (err) {
-        // The call itself is already connected and working at this
-        // point (media negotiated, quality reporting underway) -- an
-        // E2EE setup hiccup here is a separate, narrower problem than
-        // "the connection failed", and letting it propagate up to the
-        // outer try/catch would misleadingly log it as exactly that.
-        // _rotate()'s own per-peer retry/resilience (see group-e2ee.js)
-        // handles the common transient case (a peer's bundle not
-        // published yet); this catch is the backstop for whatever gets
-        // past that.
-        log(`E2EE: initial setup failed (${err.message}) — call continues, E2EE may not be established yet`);
-      }
     }
   }
 
