@@ -376,19 +376,33 @@ async function connect() {
       }
     });
     room.on(RoomEvent.EncryptionError, (error) => {
-      // The direct signal for "the room key matched at the protocol
-      // level (fingerprints agree) but frame decryption is still
-      // failing" -- as opposed to inferring it from silent/garbled
-      // media, which is what prompted adding this listener in the
-      // first place. LiveKit's own SDK has an open issue
-      // (client-sdk-js#1722) where error.participantIdentity is often
-      // undefined even though the underlying CryptorError knows it --
-      // logging the whole error object is a deliberate hedge against
-      // that gap, since the message/name may carry information the
-      // structured field doesn't yet expose in this SDK version.
-      log(`E2EE: EncryptionError -- ${error.name ?? "unknown"}: ${error.message ?? JSON.stringify(error)}`);
+      // Two reasoned fixes (own-identity key registration, then
+      // E2EE-before-media-publish ordering) both failed to resolve
+      // this in real testing -- meaning the actual cause is still
+      // unknown, not just "one more thing to hedge against". Dumping
+      // every own property of the error object, not just .name/.message,
+      // since those two alone haven't told us anything new across
+      // multiple real test runs. An earlier version of this handler had
+      // a real gap: it fell back to JSON.stringify(error) only if
+      // .message was falsy, which it never is -- so any extra fields
+      // LiveKit's CryptorError might carry (a .reason code,
+      // .participantIdentity, .frameCryptorState) were never actually
+      // being logged despite a comment here claiming they were.
+      const details = {};
+      for (const key of Object.getOwnPropertyNames(error)) {
+        if (key === "stack") continue; // too noisy for the log panel
+        details[key] = error[key];
+      }
+      log(`E2EE: EncryptionError -- ${JSON.stringify(details)}`);
     });
   }
+
+  // Debug-only exposure for this specific investigation -- lets you run
+  // things like `window.__debug.keyProvider` or check
+  // `typeof window.__debug.keyProvider.onSetEncryptionKey` directly in
+  // devtools, since `room` and `keyProvider` are otherwise trapped in
+  // this module's scope and unreachable from the console.
+  window.__debug = { room, keyProvider, e2ee };
 
   room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
     if (participant !== room.localParticipant) return;
