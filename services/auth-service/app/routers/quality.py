@@ -6,8 +6,6 @@ just because its old access token hasn't expired yet. This intentionally
 does NOT reuse devices.py's lighter check; quality data isn't the "explain
 why you're locked out" screen that exception exists for.
 """
-import time
-from collections import defaultdict, deque
 from typing import Literal
 
 from fastapi import APIRouter, Header, HTTPException
@@ -15,7 +13,9 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from app.auth_deps import require_active_device
+from app.devices import is_admin_email
 from app.quality import record_quality_report, recent_quality_reports
+from app.rate_limit import SlidingWindowLimiter, register, reset_all
 
 router = APIRouter()
 
@@ -23,31 +23,22 @@ router = APIRouter()
 # testing/webrtc-harness/app.js's QUALITY_REPORT_INTERVAL_MS), so allowing
 # a handful per window comfortably covers normal use plus retries while
 # still bounding a buggy or malicious client's ability to flood SQLite.
-# In-memory and per-process is fine at this scale (§1's <=10-member cap,
-# single auth-service instance) -- would need a shared store (Redis, which
-# is already in the stack for LiveKit) if this ever runs multi-process.
-_RATE_LIMIT_WINDOW_SECONDS = 10
-_RATE_LIMIT_MAX_REPORTS = 5
-_report_timestamps: dict[str, deque] = defaultdict(deque)
+_report_limiter = register(
+    SlidingWindowLimiter(max_events=5, window_seconds=10, name="quality_report")
+)
 
 
 def _reset_rate_limiter_state() -> None:
-    """Test-only hook -- the limiter is deliberately process-global state
-    (see module docstring on why in-memory is fine at this scale), which
-    means it leaks across test cases unless something resets it. Called
-    from tests/conftest.py's fresh_db fixture, not from any request path.
-    """
-    _report_timestamps.clear()
+    """Test-only hook, kept under its original name because
+    tests/conftest.py calls it. Resets every registered limiter, not just
+    this module's -- process-global limiter state leaks across test cases
+    wherever it lives."""
+    reset_all()
 
 
 def _check_rate_limit(device_id: str) -> None:
-    now = time.monotonic()
-    timestamps = _report_timestamps[device_id]
-    while timestamps and now - timestamps[0] > _RATE_LIMIT_WINDOW_SECONDS:
-        timestamps.popleft()
-    if len(timestamps) >= _RATE_LIMIT_MAX_REPORTS:
+    if not _report_limiter.check(device_id):
         raise HTTPException(status_code=429, detail="too many quality reports, slow down")
-    timestamps.append(now)
 
 
 class QualityReportIn(BaseModel):
@@ -96,8 +87,13 @@ def report_quality(body: QualityReportIn, authorization: str | None = Header(def
 
 @router.get("/recent")
 def get_recent(authorization: str | None = Header(default=None)):
-    require_active_device(authorization)
-    return {"reports": recent_quality_reports()}
+    """Your own devices' reports. Admins (§4, routers/devices.py) get the
+    whole picture, since diagnosing "is the Russia path working" is
+    exactly the cross-member question the dashboard exists to answer and
+    admin is already the privilege level for cross-person operations."""
+    email, _ = require_active_device(authorization)
+    scope = None if is_admin_email(email) else email
+    return {"reports": recent_quality_reports(email=scope)}
 
 
 _DASHBOARD_HTML = """<!doctype html>

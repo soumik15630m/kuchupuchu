@@ -54,19 +54,44 @@ def record_quality_report(
     db.commit()
 
 
-def recent_quality_reports(limit: int = 200) -> list[dict]:
+_SELECT_COLUMNS = """
+    room_name, device_id, reported_at, connection_quality,
+    candidate_type, relay_protocol, rtt_ms, jitter_ms,
+    packet_loss_pct, data_saver_on, audio_only
+"""
+
+
+def recent_quality_reports(email: str | None = None, limit: int = 200) -> list[dict]:
+    """Recent snapshots, scoped to `email`'s own devices unless `email`
+    is None (admin view -- see routers/quality.py).
+
+    Previously unscoped for every caller, which meant any active device
+    could read every member's room names, device ids and call timings.
+    None of that is needed to debug your own connection, and §4 otherwise
+    treats the device as the identity boundary throughout.
+    """
     db = get_db()
-    rows = db.execute(
-        """
-        SELECT room_name, device_id, reported_at, connection_quality,
-               candidate_type, relay_protocol, rtt_ms, jitter_ms,
-               packet_loss_pct, data_saver_on, audio_only
-        FROM quality_reports
-        ORDER BY reported_at DESC, id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+    if email is None:
+        rows = db.execute(
+            f"""
+            SELECT {_SELECT_COLUMNS}
+            FROM quality_reports
+            ORDER BY reported_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            f"""
+            SELECT {_SELECT_COLUMNS}
+            FROM quality_reports
+            WHERE device_id IN (SELECT id FROM devices WHERE email = ?)
+            ORDER BY reported_at DESC, id DESC
+            LIMIT ?
+            """,
+            (email, limit),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 

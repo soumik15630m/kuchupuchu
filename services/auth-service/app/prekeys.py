@@ -132,14 +132,17 @@ def upload_identity_dh_key(device_id: str, public_key_b64: str, signature_b64: s
         "INSERT INTO identity_dh_keys (device_id, public_key, signature) VALUES (?, ?, ?)",
         (device_id, public_key_b64, signature_b64),
     )
-    db.commit()
 
 
 def upload_identity_key(device_id: str, email: str, public_key_b64: str) -> None:
     """Publishes a device's identity key. Idempotent for a matching
     re-upload (a client that restarts and re-runs its setup path
     shouldn't fail here) but rejects an attempt to change it -- see
-    `IdentityKeyMismatchError`."""
+    `IdentityKeyMismatchError`.
+
+    Does not commit -- see `publish_bundle_atomically`, which wraps this
+    and the other three uploads in one transaction.
+    """
     validate_identity_key(public_key_b64)
 
     existing = get_identity_key(device_id)
@@ -153,7 +156,42 @@ def upload_identity_key(device_id: str, email: str, public_key_b64: str) -> None
         "INSERT INTO identity_keys (device_id, email, public_key) VALUES (?, ?, ?)",
         (device_id, email, public_key_b64),
     )
-    db.commit()
+
+
+def publish_bundle_atomically(
+    device_id: str,
+    email: str,
+    identity_key_b64: str,
+    identity_dh_key: tuple[str, str],
+    signed_prekey: tuple[int, str, str],
+    one_time_prekeys: list[tuple[int, str]],
+) -> None:
+    """Applies a whole published bundle, or none of it.
+
+    Each upload used to commit independently as the router called it in
+    sequence, so a bundle whose one-time prekeys were rejected (a
+    duplicate key_id, or the unused-pool cap) left the identity key and
+    signed prekey already committed. For the identity key specifically
+    that's not a retryable state: it is write-once by design, so a client
+    retrying the same publish then hit IdentityKeyMismatchError (409) on
+    a key it had itself just written, with no way forward except
+    re-provisioning the device.
+
+    `identity_dh_key` is (public_key, signature); `signed_prekey` is
+    (key_id, public_key, signature).
+    """
+    db = get_db()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        upload_identity_key(device_id, email, identity_key_b64)
+        upload_identity_dh_key(device_id, identity_dh_key[0], identity_dh_key[1])
+        upload_signed_prekey(device_id, signed_prekey[0], signed_prekey[1], signed_prekey[2])
+        if one_time_prekeys:
+            add_one_time_prekeys(device_id, one_time_prekeys)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def upload_signed_prekey(device_id: str, key_id: int, public_key_b64: str, signature_b64: str) -> None:
@@ -188,13 +226,16 @@ def upload_signed_prekey(device_id: str, key_id: int, public_key_b64: str, signa
         """,
         (device_id, key_id, public_key_b64, signature_b64),
     )
-    db.commit()
 
 
 def add_one_time_prekeys(device_id: str, keys: list[tuple[int, str]]) -> None:
     """`keys` is a list of (key_id, public_key_b64) pairs. Validates every
     entry before writing any of them, so a bad entry midway through a
-    batch doesn't leave a partial upload on file."""
+    batch doesn't leave a partial upload on file.
+
+    A duplicate key_id can still only be caught by the UNIQUE constraint
+    mid-loop, so callers must run this inside a transaction to get
+    all-or-nothing behaviour -- `publish_bundle_atomically` does."""
     for _, public_key_b64 in keys:
         validate_x25519_public_key(public_key_b64)
 
@@ -216,11 +257,12 @@ def add_one_time_prekeys(device_id: str, keys: list[tuple[int, str]]) -> None:
                 (device_id, key_id, public_key_b64),
             )
     except Exception as exc:
-        db.rollback()
+        # Deliberately no rollback here -- the caller owns the
+        # transaction (see the docstring), and rolling back from inside
+        # would silently discard its other work too.
         if "UNIQUE constraint failed" in str(exc):
             raise DuplicateOneTimePrekeyIdError(device_id) from exc
         raise
-    db.commit()
 
 
 def unused_one_time_prekey_count(device_id: str) -> int:
@@ -266,6 +308,38 @@ def _consume_one_time_prekey(device_id: str) -> dict | None:
     if row is None:
         return None
     return {"key_id": row["key_id"], "public_key": row["public_key"]}
+
+
+def get_identity_material(device_id: str) -> dict | None:
+    """A device's identity key and its signed identity-DH key -- and
+    nothing else. Returns None if the device hasn't published both yet.
+
+    Exists as a separate read from `get_bundle` specifically because it
+    does NOT consume a one-time prekey. Its caller (the client verifying
+    that an inbound X3DH initial message really came from the device it
+    claims to be from -- see group-e2ee.js's _verifyClaimedIdentity)
+    needs only this binding, and routing that check through `get_bundle`
+    would turn every inbound session request into a one-time-prekey
+    consumption, handing any room participant a way to drain a peer's
+    pool just by talking to them.
+    """
+    db = get_db()
+    identity_row = db.execute(
+        "SELECT public_key FROM identity_keys WHERE device_id = ?", (device_id,)
+    ).fetchone()
+    identity_dh_row = db.execute(
+        "SELECT public_key, signature FROM identity_dh_keys WHERE device_id = ?", (device_id,)
+    ).fetchone()
+    if identity_row is None or identity_dh_row is None:
+        return None
+
+    return {
+        "identity_key": identity_row["public_key"],
+        "identity_dh_key": {
+            "public_key": identity_dh_row["public_key"],
+            "signature": identity_dh_row["signature"],
+        },
+    }
 
 
 def get_bundle(device_id: str) -> dict | None:
