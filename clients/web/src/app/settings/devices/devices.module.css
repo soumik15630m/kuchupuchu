@@ -1,0 +1,84 @@
+.device {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.info {
+  flex: 1;
+  min-width: 0;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: calc(15px * var(--font-scale));
+  font-weight: 600;
+}
+
+.thisTag {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+}
+
+.meta {
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+.meta [data-status="active"] {
+  color: var(--ok);
+  font-weight: 600;
+}
+.meta [data-status="revoked"] {
+  color: var(--danger);
+  font-weight: 600;
+}
+.meta [data-status="expired"] {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.id {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--ink-faint);
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revoke {
+  flex: none;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: calc(13px * var(--font-scale));
+  font-weight: 600;
+}
+
+.revoke:disabled {
+  opacity: 0.5;
+}
+
+.error {
+  margin: 16px;
+  color: var(--danger);
+  font-size: calc(13.5px * var(--font-scale));
+}
+
+.note {
+  padding: 16px;
+  color: var(--ink-muted);
+  font-size: calc(12.5px * var(--font-scale));
+}

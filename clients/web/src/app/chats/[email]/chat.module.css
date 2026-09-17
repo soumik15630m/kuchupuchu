@@ -1,0 +1,142 @@
+.chat {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background-repeat: repeat;
+  background-attachment: local;
+  --wp-tint: rgba(0, 0, 0, 0.06);
+}
+
+:global([data-theme="dark"]) .canvas {
+  --wp-tint: rgba(255, 255, 255, 0.05);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+}
+
+.stream {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 10px 8px;
+  min-height: 100%;
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: min(78%, 560px);
+  padding: 6px 9px 5px;
+  border-radius: var(--radius-bubble);
+  font-size: calc(14.5px * var(--font-scale));
+  color: var(--bubble-ink);
+  box-shadow: var(--shadow-1);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.in {
+  align-self: flex-start;
+  background: var(--bubble-in);
+  border-top-left-radius: 2px;
+}
+
+.out {
+  align-self: flex-end;
+  background: var(--bubble-out);
+  border-top-right-radius: 2px;
+}
+
+.meta {
+  display: block;
+  margin-top: 1px;
+  text-align: right;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--bubble-meta);
+}
+
+.composer {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: var(--bg-header);
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 22px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  max-height: 120px;
+  border: none;
+  outline: none;
+  background: none;
+  resize: none;
+  font-size: max(16px, calc(15px * var(--font-scale)));
+  line-height: 1.4;
+  padding: 4px 0;
+}
+
+.composerIcon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--ink-muted);
+  flex: none;
+}
+
+.composerIcon:hover {
+  background: var(--bg-hover);
+}
+
+.send {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.empty {
+  position: relative;
+  align-self: center;
+  margin: auto 0;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  color: #fff;
+  font-size: calc(12.5px * var(--font-scale));
+}

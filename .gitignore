@@ -29,6 +29,9 @@ clients/android/build/
 clients/web/.next/
 clients/web/node_modules/
 
+# claude code local state -- holds the worktrees themselves, never commit
+.claude/
+
 # os
 .DS_Store
 .token-*.json

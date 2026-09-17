@@ -1,0 +1,137 @@
+.shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.sidebar {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+
+.detail {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Mobile routes to one pane at a time; the detail pane is its own screen. */
+.shell[data-pane="detail"] .sidebar {
+  display: none;
+}
+.shell[data-pane="detail"] .detail {
+  display: flex;
+}
+
+.tabs {
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--bg-header);
+  padding-bottom: env(safe-area-inset-bottom);
+  flex: none;
+}
+
+.shell[data-pane="detail"] .tabs {
+  display: none;
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  color: var(--ink-muted);
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 500;
+  min-height: var(--navbar-h);
+  justify-content: center;
+}
+
+.tab[aria-current="page"] {
+  color: var(--accent);
+}
+
+.tabIcon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-pill);
+  transition: background 0.15s ease;
+}
+
+.tab[aria-current="page"] .tabIcon {
+  background: var(--accent-soft);
+}
+
+.badge {
+  position: absolute;
+  transform: translate(12px, -10px);
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 10px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+@media (min-width: 900px) {
+  /* The tab bar is a sibling of the body, so it cannot reorder into the row on
+     its own — reversing the shell puts it on the left without moving it in the
+     DOM, which keeps the mobile tab order intact for a screen reader. */
+  .shell {
+    flex-direction: row-reverse;
+  }
+
+  .body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sidebar {
+    display: flex !important;
+    width: 380px;
+    flex: none;
+  }
+
+  .detail {
+    display: flex !important;
+    background: var(--bg-sunken);
+  }
+
+  .tabs {
+    display: flex !important;
+    flex-direction: column;
+    width: 68px;
+    flex: none;
+    border-top: none;
+    border-right: 1px solid var(--border);
+    padding-bottom: 0;
+    padding-top: 8px;
+  }
+
+  .tab {
+    flex: none;
+    padding: 12px 4px;
+  }
+}

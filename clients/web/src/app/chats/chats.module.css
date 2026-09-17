@@ -1,0 +1,122 @@
+.searchWrap {
+  padding: 8px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  color: var(--ink-muted);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: max(16px, calc(14px * var(--font-scale)));
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 11px 14px;
+  text-align: left;
+  color: inherit;
+}
+
+.item:hover {
+  background: var(--bg-hover);
+}
+
+.item[aria-current="true"] {
+  background: var(--bg-active);
+}
+
+.avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: calc(16px * var(--font-scale));
+  font-weight: 600;
+  flex: none;
+}
+
+.itemBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.itemTop {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.itemName {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(16px * var(--font-scale));
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemTime {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--ink-muted);
+  flex: none;
+}
+
+.itemPreview {
+  font-size: calc(13.5px * var(--font-scale));
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.fab {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow-2);
+}
+
+.fabWrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.banner {
+  padding: 10px 14px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-scale));
+  border-bottom: 1px solid var(--border);
+}
