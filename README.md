@@ -3,12 +3,21 @@
 Design doc: [`docs/design-doc-v6.md`](./docs/design-doc-v6.md) — read §1a (hosting), §3a (this
 repo's layout), and §13 (implementation phases) first.
 
-**Current status: Phase 3 (§13) done, validated 2026-09-02** — call quality &
-Russia-path reliability, on top of Phase 1's SFU + minimal auth walking skeleton
-and Phase 2's access control/revocation. Next up is Phase 4 (end-to-end
-encryption). `wake-service`, `messaging-service`, and both real `clients/` are
+**Current status: Phase 4 (§13) done, validated 2026-09-16** — end-to-end
+encryption, on top of Phase 1's SFU + minimal auth walking skeleton, Phase 2's
+access control/revocation, and Phase 3's call quality & Russia-path reliability
+(done, validated 2026-09-02).
+
+The done-bar was met with three real browser tabs against the local stack:
+a 1:1 call and a 3-participant call with a mid-call join *and* leave, with
+the displayed room-key fingerprint compared across every participant at
+each step and remote video confirmed decrypting throughout. See "Phase 4
+walkthrough" below for the exact sequence, and §13 Phase 4 in the design
+doc for the recorded result.
+
+`wake-service`, `messaging-service`, and both real `clients/` are
 placeholders until Phase 5/6 — `testing/webrtc-harness/` is a throwaway browser
-harness standing in for them so Phase 3's features had somewhere to run.
+harness standing in for them so Phases 3 and 4 had somewhere to run.
 
 ## Dependencies
 
@@ -85,10 +94,31 @@ Production: run acme.sh/certbot against both `PUBLIC_HOSTNAME` and
 `/etc/letsencrypt` (Let's Encrypt's own directory layout —
 `live/<hostname>/fullchain.pem` + `privkey.pem`, one directory per hostname).
 
-Local dev, before §1a is resolved: two options, both writing into the same
-layout. Prefer mkcert if you have it (or can install it) — its certs are
-trusted automatically by `lk`, curl, and browsers, unlike a plain
-self-signed cert:
+**Local dev: automatic.** With `DEV_AUTO_CERTS=true` in `.env` (the
+default in `.env.example`), `docker compose up` signs certs for whatever
+`PUBLIC_HOSTNAME`/`TURN_HOSTNAME` are currently set, before nginx and
+coturn start. There is no manual cert step, and changing a hostname can't
+leave you running against certs for the old one.
+
+It needs one-time setup, because the certs have to be signed by the CA
+that's already in *your* trust store — a CA generated inside a container
+would be trusted by nobody:
+
+```bash
+mkcert -install    # once per machine: creates and trusts the local CA
+mkcert -CAROOT     # prints the directory — put it in .env as MKCERT_CAROOT
+```
+
+That directory is mounted read-only into a short-lived `cert-init`
+service which signs with it. Two guards worth knowing about: it does
+nothing at all unless `DEV_AUTO_CERTS` is true, and it refuses to
+overwrite any certificate its own CA didn't issue — so pointing this at a
+deployment holding real acme.sh certificates stops with an error instead
+of silently downgrading it to certs one machine trusts. **Set
+`DEV_AUTO_CERTS=false` for any real deployment.**
+
+The standalone scripts still exist for generating certs without bringing
+the stack up, and both write the same layout:
 
 ```bash
 ./scripts/dev-mkcert-cert.sh   # preferred — https://github.com/FiloSottile/mkcert
@@ -104,6 +134,27 @@ cert (e.g. import it into your OS's trusted root store) for those to work.
 (You'll need to tell your test client to trust it, or accept the certificate
 warning — expected for local-only testing, not something to do once this is
 reachable for real.)
+
+**Certs are per-hostname, and the hostname is in `.env`.** Both scripts
+write to `./certs/live/<hostname>/`, and nginx/coturn look up exactly the
+`PUBLIC_HOSTNAME`/`TURN_HOSTNAME` currently set. So changing either one —
+which happens on its own if you use a `nip.io`-style name with your LAN IP
+embedded in it, and that IP changes — means the existing certs no longer
+match and you need to re-run the script. Both containers now fail at
+startup with the expected path, the hostnames they *did* find, and the
+command to fix it, rather than an opaque TLS load error.
+
+Two notes for Windows, both of which used to stop these scripts working
+at all:
+
+- `mkcert -install` exits non-zero if *any* trust store it knows about
+  fails, including the Java keystore (needs administrator rights) and
+  Firefox/NSS. Neither matters here. The script now treats the **system**
+  trust store — the one browsers, `curl` and `lk` read — as the thing
+  that has to succeed, and downgrades the rest to a warning.
+- Git Bash/MSYS rewrites path-shaped arguments, which mangled openssl's
+  `-subj "/CN=host"` into a filesystem path and made the self-signed
+  script fail after writing the key but before writing the certificate.
 
 ## Running it
 
@@ -161,16 +212,27 @@ curl -k -X POST https://localhost/auth/otp/verify \
 
 Save the `accessToken` from the response.
 
-**3. Mint a room token:**
+**3. Mint a room token.** You name the *people* you're calling, not the
+room — the server derives the room name from the participant set
+(`app/rooms.py`) and mints a grant scoped to it:
 
 ```bash
 curl -k -X POST https://localhost/auth/room/token \
   -H "Authorization: Bearer <accessToken>" \
   -H 'Content-Type: application/json' \
-  -d '{"roomName":"test-room"}'
+  -d '{"participants":["them@example.com"]}'
 ```
 
-Save the `roomToken` and `livekitUrl` from the response.
+Save the `roomName`, `roomToken` and `livekitUrl` from the response.
+Everyone on the call derives the same `roomName` from their own end
+without coordinating, so the other party runs the same request with
+*your* address in `participants` and lands in the same room.
+
+This is what stops an allowlisted member joining a call they weren't
+part of: a token can only ever be minted for a room whose name is
+derived from a participant set the caller is in, so there's no request
+an outsider can make that produces a grant for someone else's call.
+Every address named must already be on the allowlist.
 
 **4. Join the room** with `livekit-cli`. Since Phase 2, the LiveKit participant
 identity is your **device id**, not your email (§4/§13 — this is what lets
@@ -178,7 +240,7 @@ revocation disconnect one device without touching your other one):
 
 ```bash
 lk room join --url <livekitUrl> --api-key devkey --api-secret <LIVEKIT_API_SECRET> \
-  --identity my-test-device test-room
+  --identity my-test-device <roomName-from-step-3>
 ```
 
 Repeat steps 1-4 with a second allowlisted email from a second device to get
@@ -269,8 +331,8 @@ cd testing/webrtc-harness && python3 -m http.server 8000
 ```
 
 In each tab, paste a room token and the ICE server list — both come back from
-the same call: `POST /auth/room/token` returns `{ roomToken, livekitUrl,
-turnCredentials }`. Convert `turnCredentials` into the `iceServers` array the
+the same call: `POST /auth/room/token` returns `{ roomName, roomToken,
+livekitUrl, turnCredentials }`. Convert `turnCredentials` into the `iceServers` array the
 harness expects (`[{ urls: turnCredentials.uris, username: ..., credential:
 turnCredentials.password }]`).
 
@@ -301,6 +363,56 @@ sudo ./scripts/network-emulation.sh eth0 <peer-ip> --clear
 ./scripts/toxiproxy-scenarios.sh teardown
 docker compose -f docker-compose.yml -f docker-compose.testing.yml down
 ```
+
+## Phase 4 walkthrough: end-to-end encryption
+
+**Implemented** (`testing/webrtc-harness/signal-crypto.js`, `double-ratchet.js`,
+`rotation.js`, `group-e2ee.js`, `key-provider.js`; `services/auth-service/app/prekeys.py`
++ `routers/prekeys.py`, migrations `004_phase4_prekeys.sql` and
+`006_phase4_identity_dh_key.sql`):
+
+- X3DH key agreement on native WebCrypto X25519/Ed25519, with prekey
+  bundle publish/fetch backed by the auth-service.
+- A generation-indexed transport chain per peer, carrying room-key
+  delivery (not a general-purpose message ratchet — see
+  `double-ratchet.js`'s header for the scoping).
+- Deterministic rotator election, pairwise room-key distribution over
+  LiveKit's data channel, and §6.1's fingerprint/retry/rejoin policy.
+- SFrame frame encryption via LiveKit's own worker-based key provider.
+- Identity safety numbers, distinct from the room-key fingerprint.
+
+The crypto modules have real unit tests (`node --test test/*.test.mjs`
+from `testing/webrtc-harness/`, 43 of them). What they can't cover is
+frame encryption actually working against a live SFU, which is what the
+done-bar below is for.
+
+**1. Serve the harness over HTTPS** — it's mounted into nginx at
+`/harness/` (see `docker-compose.yml`), so `docker compose up` is enough.
+Open `https://<PUBLIC_HOSTNAME>/harness/` in two browsers/profiles.
+Don't use a separate `python3 -m http.server`: `getUserMedia` needs a
+secure context, and the E2EE worker's CSP is set up for this origin.
+
+**2. In each tab**, fill in the LiveKit URL, the room token and access
+token from the Phase 1 walkthrough, and the **device → email roster** —
+a JSON object mapping every *other* participant's device id to their
+email, e.g. `{"dev-b": "b@example.com"}`. That roster is a harness
+concession; a real client already knows its own contacts (see
+`group-e2ee.js`'s header).
+
+**3. Connect both tabs** and compare the fingerprint shown under the
+video. They must match. Then compare the **identity safety numbers** —
+those are the values worth reading out over a *different* channel (a
+phone call, in person), since they're what actually pins who you're
+talking to; the room-key fingerprint only says you currently share a key.
+
+**4. Add a third participant mid-call**, then have one leave. The
+fingerprint must change on every join/leave (rotation) and must still
+agree across all remaining tabs afterward. That's §13 Phase 4's actual
+finish line.
+
+If a "keys don't match — rejoin" banner appears instead, that's §6.1's
+mismatch policy firing; `rotation.js` has the retry-then-prompt logic and
+the harness log panel shows what led up to it.
 
 ## Repo layout
 

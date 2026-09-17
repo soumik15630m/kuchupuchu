@@ -18,7 +18,9 @@ python3 -m http.server 8000
 Then open `http://localhost:8000`, paste in:
 - a LiveKit server URL (`wss://<PUBLIC_HOSTNAME>`)
 - a room token and ICE server list — both returned by a single call to
-  `POST /auth/room/token` (`{ roomToken, livekitUrl, turnCredentials }`,
+  `POST /auth/room/token` (`{ roomName, roomToken, livekitUrl,
+  turnCredentials }` -- you send `{"participants": ["them@example.com"]}`;
+  the server derives the room name from the participant set,
   same as the Phase 1/2 walkthroughs in the root README). Build the
   `iceServers` array the harness expects from `turnCredentials.uris`
   (`urls`), `turnCredentials.username`, and `turnCredentials.password`
@@ -104,16 +106,62 @@ relying on E2EE working in a given browser.
    should match. If a "rejoin" banner appears instead, see §6.1's
    mismatch-retry policy in `rotation.js`.
 
+### Verifying who you're actually talking to
+
+Two different values, and they are not interchangeable:
+
+- The **room-key fingerprint** (§6.1, 4 hex chars) says "we currently
+  share a key". It changes on every rotation, and says nothing about
+  *whose* key it is.
+- The **identity safety number** is derived from the two devices' Ed25519
+  identity keys and is stable across rotations and reconnects. This is
+  the one worth reading out over a channel the server doesn't control.
+
+On the wire, §6.1's consistency check sends a MAC over
+(generation, sender identity) keyed by the room key -- not the
+fingerprint itself. Broadcasting the fingerprint would prove nothing: a
+participant on the wrong key can read everyone else's off the data
+channel and echo it back to suppress the mismatch. See
+`double-ratchet.js`'s `fingerprintProof`.
+
+An inbound X3DH initial message is checked against the sender's
+server-held identity material before any session is established
+(`group-e2ee.js`'s `_verifyClaimedIdentity`, using
+`GET /prekeys/{email}/{deviceId}/identity`, which deliberately does not
+consume a one-time prekey). `identity_key` is public, so without that
+check an attacker can copy a victim's verbatim while substituting their
+own DH key -- and the safety number shown to the user still matches the
+victim exactly. The AEAD over each room-key blob is also bound to the
+X3DH identity pair (`IK_A || IK_B`), not just the generation number.
+
+### Frame encryption
+
 Actual frame encryption/decryption runs through LiveKit's own built-in
 E2EE (`key-provider.js`'s `GroupKeyProvider` feeds it the rotation-
 derived key) -- see that file's header comment for the one piece of this
 Phase 4 work that isn't unit tested here: it needs a real browser and a
 real LiveKit connection to exercise meaningfully, unlike the crypto
-modules above. `createE2eeWorker()` there fetches the frame-cryptor
-worker script and constructs it from a `blob:` URL rather than the raw
-CDN URL directly -- `new Worker(crossOriginUrl)` is rejected by every
-browser regardless of CORS headers, which only surfaces the first time
-someone actually runs this in a browser (see git history for exactly
-that). The pinned version there needs to move in lockstep with the
-SRI-pinned `<script>` tag in `index.html` if either is ever bumped.
+modules above.
+
+Two things there that bit us and are worth knowing before touching it:
+
+- `applyRoomKey` must hand LiveKit an **imported HKDF `CryptoKey`**, not
+  raw bytes. `onSetEncryptionKey` neither imports nor validates what it's
+  given, so raw bytes travel all the way into the frame-cryptor worker
+  before throwing -- surfacing as a `MissingKey` error about an identity
+  that looks correctly registered, three layers from the actual mistake.
+- `createE2eeWorker()` fetches the worker script and constructs it from a
+  `blob:` URL rather than the raw CDN URL: `new Worker(crossOriginUrl)`
+  is rejected by every browser regardless of CORS headers. The fetched
+  bytes are SHA-384 checked against `E2EE_WORKER_SCRIPT_SRI` before the
+  Worker is constructed, since `Worker`/`fetch` have no `integrity`
+  option and this script *is* the frame cryptor.
+
+The pinned version, `E2EE_WORKER_SCRIPT_SRI`, and the SRI-pinned
+`<script>` tag in `index.html` all need to move in lockstep if any of
+them is ever bumped. Regenerate a hash with:
+
+```
+curl -sS <url> | openssl dgst -sha384 -binary | openssl base64 -A
+```
 

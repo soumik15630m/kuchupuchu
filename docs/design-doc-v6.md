@@ -389,6 +389,44 @@ The scripted `toxiproxy-scenarios.sh cut` was run for completeness but had no ob
 Signal Protocol (X3DH + Double Ratchet) as the shared key-agreement layer, SFrame frame encryption for calls, deterministic room-key rotation for group calls, prekey endpoint auth.
 **Done when**: a call's SFrame key fingerprint (§6.1) matches on both ends for a 1:1 call and for a 3+ participant call including a mid-call join/leave, verified by actually comparing the displayed fingerprints — not just "it connected."
 
+**Status: done, validated 2026-09-16.** Three `testing/webrtc-harness/` tabs (dev-a, dev-b, dev-c), real camera + microphone, against the local docker-compose stack. Fingerprints compared at every membership change, and every participant agreed at every generation:
+
+| event | generation | dev-a | dev-b | dev-c |
+|---|---|---|---|---|
+| dev-a alone | 0 | `44fc` | — | — |
+| dev-b joins (1:1) | 1 | `5254` | `5254` | — |
+| dev-c joins mid-call | 3 | `a04f` | `a04f` | `a04f` |
+| dev-c leaves mid-call | 4 | `09bd` | `09bd` | — |
+
+Not just matching numbers: remote video rendered and advanced on every participant throughout (320x180, `currentTime` increasing), so frames were genuinely being decrypted rather than silently dropped. Identity safety numbers agreed pairwise and stayed stable across all four rotations, distinct from the room-key fingerprint as §6.1 intends. No rejoin banner fired at any point.
+
+A second run additionally covered **leave-then-rejoin**, the recovery path that had only ever been unit tested (the rotator still holds a cached X3DH session for a peer whose own session state was wiped by reconnecting — see `group-e2ee.js`'s `session-reset` handling). dev-c disconnected from a 3-way call and reconnected in the same tab, reusing its cached crypto identity:
+
+| event | generation | dev-a | dev-b | dev-c |
+|---|---|---|---|---|
+| 3-way established | 3 | `2439` | `2439` | `2439` |
+| dev-c leaves | 4 | `ebdc` | `ebdc` | — |
+| **dev-c rejoins** | 5 | `0cf3` | `0cf3` | `0cf3` |
+
+All three converged, no rejoin banner, and both remaining peers rendered dev-c's new stream with `corruptedVideoFrames: 0` — the metric that would be non-zero if frames were being decrypted under the wrong key.
+
+#### The `MissingKey` burst at join: root cause
+
+Worth writing down, because the message is misleading and cost real debugging time once already. The two variants come from *different* code paths in `livekit-client.e2ee.worker.js`:
+
+- `key set not found for <self> at index N` — from `encodeFunction`. This is the **encoder**, encrypting frames this client is *sending*. `keys.getKeySet()` returned nothing: no key at all.
+- `missing key at index N for participant <peer>` — from `decodeFunction`. This is the **decoder**, for a *remote* peer's frames. A key set exists but that index is empty.
+
+The count is exactly predictable: `emitThrottledError` deduplicates per `(participantIdentity, reason)`, but each *track* has its own cryptor with its own counter. So a joining peer in a 3-way call emits 2 decoder errors per remote peer (audio + video) plus 2 encoder errors for its own two published tracks — 6 total, which is exactly what dev-c's rejoin produced. In the 1:1 case it is 4.
+
+The cause is an ordering gap, not a key-agreement failure. LiveKit auto-subscribes remote tracks during `room.connect()` and creates a frame cryptor per track immediately, and this harness publishes its own media right after connecting. The room key, however, cannot arrive until the elected rotator notices the membership change, runs X3DH, and delivers it over the data channel — hundreds of milliseconds later. Frames that arrive in that window genuinely have no key yet.
+
+It is self-correcting, bounded, and invisible to users, and it is **not** the bug that blocked this phase for weeks — that one never stopped, because the key was never installed at all (raw bytes handed where an imported HKDF `CryptoKey` was required). Closing this remaining window properly means either deferring subscription until the first key is applied, or having a joining participant request the current key rather than waiting to be told. Both are design changes for Phase 5's real client, not fixes to make here.
+
+One other observation: the mid-call join briefly passed through generation 2 before settling on 3 — two rotations fired for one join event. Every client converged on the same final generation and key, so §6.1's mismatch-retry path was never needed, but the extra rotation is worth understanding before Phase 5 builds on this.
+
+Prior to this run, the frame-cryptor path had never worked: the room key was being handed to LiveKit as raw bytes where an imported HKDF `CryptoKey` is required, which surfaced as a permanent `MissingKey` error naming an identity that *was* correctly registered — three layers away from the actual mistake. See `testing/webrtc-harness/key-provider.js`'s `applyRoomKey`.
+
 ### Phase 5 — Native clients + wake system
 Android Kotlin app (LiveKit SDK, ConnectionService/Telecom), Next.js web client, wake service with dual-channel (FCM + persistent WS) delivery, CI/CD via GitHub Actions/Releases.
 **Done when**: an incoming call rings on the Android lock screen via the native call UI, delivered over WS when the app holds one open and over FCM as a real fallback (tested by actually blocking FCM and confirming the WS path alone still delivers the call).

@@ -33,3 +33,6 @@ clients/web/node_modules/
 .DS_Store
 .token-*.json
 .idea/
+
+# personal working agreement, not shared
+houserules.md
