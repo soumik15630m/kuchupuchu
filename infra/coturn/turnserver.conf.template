@@ -24,6 +24,17 @@ pkey=/etc/letsencrypt/live/${TURN_HOSTNAME}/privkey.pem
 min-port=49160
 max-port=49200
 
+# Filled in by docker-entrypoint.sh. Without it coturn allocates the
+# relay on whichever interface the client arrived on -- which is
+# 127.0.0.1 behind nginx's demux, reachable by nothing.
+{{TURN_RELAY_IP}}
+
+# What clients are told the relay is at, when that differs from where
+# it binds. Under Docker it always does: coturn binds a container
+# address, clients reach it through the host's published ports.
+# Format is external/internal. Omitted when TURN_EXTERNAL_IP is unset.
+{{TURN_EXTERNAL_IP}}
+
 # This box runs on the operator's own home LAN by design (§1a) -- without
 # these, any authenticated TURN client can direct the relay at loopback,
 # link-local, or the operator's private address space (router admin panel,
@@ -41,6 +52,37 @@ denied-peer-ip=198.18.0.0-198.19.255.255
 denied-peer-ip=::1
 denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
 denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+# allowed-peer-ip overrides the denials above. MUST be empty in
+# production -- opening a private range turns the relay into a way to
+# reach anything on the operator's LAN. Set only by
+# docker-compose.testing.yml, because on a single host the SFU's own
+# address falls inside a denied range.
+{{TURN_ALLOWED_PEER_IPS}}
+
+# denied-peer-ip above covers unicast private space, but multicast and
+# broadcast destinations are a separate address class it doesn't touch --
+# without this a relay can be pointed at 224.0.0.0/4 and used to fan
+# traffic out across the operator's LAN.
+no-multicast-peers
+
+# Relaying is for WebRTC media, which is UDP. Permitting TCP relay turns
+# this into a general-purpose TCP proxy for anyone holding valid (short-
+# lived, but valid) credentials.
+no-tcp-relay
+
+# A TURN username here is scoped to one DEVICE, and one device on one
+# call allocates far more than a handful: two peer connections, a
+# relay candidate per component, and gather_continually re-allocating
+# on every ICE restart. Measured 10-20 per connect. This was 12, which
+# refused allocations and broke relaying with no error naming quota.
+user-quota=60
+total-quota=600
+
+# Bounds how long a relay port can be parked on a credential that has
+# since expired for every other purpose.
+max-allocate-lifetime=600
+stale-nonce=600
 
 no-cli
 # Default /var/run/turnserver.pid isn't writable by the unprivileged
