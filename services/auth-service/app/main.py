@@ -4,25 +4,40 @@ import os
 import time
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-load_dotenv()
+# Bare load_dotenv() walks up with no stopping point; from a git
+# worktree that reaches a different checkout's .env entirely.
+#
+# KUCHUPUCHU_SKIP_DOTENV=1 disables it: a suite whose results depend
+# on whether a .env exists on disk is not a suite.
+_SERVICE_DIR = Path(__file__).resolve().parent.parent
+if os.environ.get("KUCHUPUCHU_SKIP_DOTENV") != "1":
+    for _candidate in (_SERVICE_DIR / ".env", _SERVICE_DIR.parent.parent / ".env"):
+        if _candidate.is_file():
+            load_dotenv(_candidate)
+            break
 
 from app.logging_config import configure_logging
 
 configure_logging()
 
 import aiohttp
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from app.auth_deps import parse_access_token
 from app.db import get_db
-from app.devices import expire_stale_web_devices
+from app.devices import expire_stale_web_devices, is_admin_email
 from app.livekit_admin import close_client, init_client
+from app.mailer import validate_transport
 from app.metrics import http_request_duration_seconds, http_requests_total
 from app.quality import prune_old_quality_reports
+from app.session_tokens import validate_secrets
 from app.routers import auth as auth_router
 from app.routers import devices as devices_router
 from app.routers import prekeys as prekeys_router
@@ -66,6 +81,11 @@ async def _quality_retention_sweep_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Before anything else: refuse to serve traffic with placeholder or
+    # reused signing secrets, missing required settings, or an OTP
+    # transport that was never deliberately chosen.
+    validate_secrets()
+    validate_transport()
     init_client()
     tasks = [
         asyncio.create_task(_expiry_sweep_loop()),
@@ -119,7 +139,15 @@ async def _metrics_middleware(request: Request, call_next):
 
 
 @app.get("/metrics")
-def metrics():
+def metrics(authorization: str | None = Header(default=None)):
+    """Admin-only. nginx proxies /auth/ to this app's root, so this was
+    publicly reachable at /auth/metrics -- OTP outcome counts,
+    revocation counts, per-route traffic. 404 rather than 403 for a
+    non-admin, matching routers/devices.py.
+    """
+    email = parse_access_token(authorization)["sub"]
+    if not is_admin_email(email):
+        raise HTTPException(status_code=404, detail="not found")
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 

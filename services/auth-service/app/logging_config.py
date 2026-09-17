@@ -14,6 +14,20 @@ import sys
 from datetime import datetime, timezone
 
 
+# Structured `extra=` fields are written to the log verbatim, so a key
+# that happens to carry a credential ends up in whatever collects these.
+# Redacting by key name is a backstop, not a licence to log secrets: the
+# right fix is never passing them. It exists because the cost of being
+# wrong here is a durable, replicated copy of the value.
+_REDACTED_KEY_SUBSTRINGS = ("secret", "password", "token", "code_hash", "otp", "authorization", "api_key")
+REDACTED = "[redacted]"
+
+
+def _should_redact(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in _REDACTED_KEY_SUBSTRINGS)
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
@@ -29,7 +43,7 @@ class JsonFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key in _RESERVED_LOG_RECORD_ATTRS or key in payload:
                 continue
-            payload[key] = value
+            payload[key] = REDACTED if _should_redact(key) else value
         return json.dumps(payload, default=str)
 
 

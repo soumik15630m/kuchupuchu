@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -35,8 +36,20 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _hash_code(code: str) -> str:
-    return hashlib.sha256(code.encode()).hexdigest()
+def _hash_code(code: str, email: str) -> str:
+    """HMAC-SHA256(JWT_SECRET, email|code), not a bare hash.
+
+    Six digits is a million values: a plain SHA-256 of one is
+    reversible by exhaustive search, so anyone reading otp_codes gets
+    every live login code. Binding the email in stops a code hashed
+    for one account matching another's row.
+
+    Rotating JWT_SECRET invalidates codes already in flight.
+    """
+    key = os.environ.get("JWT_SECRET")
+    if not key:
+        raise RuntimeError("Missing signing secret (JWT_SECRET)")
+    return hmac.new(key.encode(), f"{email}|{code}".encode(), hashlib.sha256).hexdigest()
 
 
 def _is_allowlisted(email: str) -> bool:
@@ -75,7 +88,7 @@ def request_otp(email: str) -> str:
 
         db.execute(
             "INSERT INTO otp_codes (email, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
-            (normalized, _hash_code(code), expires_at, _now().isoformat()),
+            (normalized, _hash_code(code, normalized), expires_at, _now().isoformat()),
         )
         db.commit()
         otp_requests_total.labels(outcome="sent").inc()
@@ -123,7 +136,7 @@ def verify_otp(email: str, submitted_code: str) -> None:
         otp_verifications_total.labels(outcome="expired").inc()
         raise OtpExpiredError("OTP expired; request a new code")
 
-    if not hmac.compare_digest(_hash_code(submitted_code), row["code_hash"]):
+    if not hmac.compare_digest(_hash_code(submitted_code, normalized), row["code_hash"]):
         db.execute("UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?", (row["id"],))
         db.commit()
         otp_verifications_total.labels(outcome="invalid").inc()

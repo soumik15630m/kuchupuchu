@@ -106,6 +106,19 @@ def list_devices_for_email(email: str):
     ).fetchall()
 
 
+def is_allowlisted(email: str) -> bool:
+    """Whether `email` is a known member (§1's <=10-member allowlist).
+
+    otp.py has its own private copy of this check for the login path;
+    this one exists for callers that are already authenticated and need
+    to validate *someone else's* address -- currently room-token minting,
+    which derives a room name from a participant set.
+    """
+    db = get_db()
+    row = db.execute("SELECT 1 FROM allowlist WHERE email = ?", (email.lower(),)).fetchone()
+    return row is not None
+
+
 def is_admin_email(email: str) -> bool:
     """Backs the two admin-only endpoints in routers/devices.py. is_admin
     is granted by ADMIN_EMAILS at migration time (app/migrate.py) -- there's

@@ -9,6 +9,67 @@ ACCESS_TTL_MIN = int(os.environ.get("JWT_ACCESS_TOKEN_TTL_MIN", "15"))
 REFRESH_TTL_DAYS = int(os.environ.get("JWT_REFRESH_TOKEN_TTL_DAYS", "30"))
 
 
+# An unchanged placeholder means anyone can mint a token for any
+# allowlisted email, and every other control is decoration.
+_PLACEHOLDER_SECRETS = frozenset(
+    {
+        "change_me_to_a_long_random_secret",
+        "changeme",
+        "change_me",
+        "secret",
+        "devkey",
+    }
+)
+
+MIN_SECRET_LENGTH = 32
+
+
+# Read with os.environ[...] deep inside request handling (see
+# media_credentials.py), where a missing one surfaces as a KeyError -> 500
+# on an otherwise valid call, at the worst possible moment and with no
+# indication of what's wrong. There is no reason to discover this at call
+# time: it's static configuration, known at boot.
+_REQUIRED_SETTINGS = ("LIVEKIT_API_KEY", "LIVEKIT_URL", "TURN_HOSTNAME")
+
+
+def validate_secrets() -> None:
+    """Fails startup on a missing, placeholder, or too-short secret, and
+    on missing non-secret configuration the request path assumes.
+
+    Called from main.py's lifespan so the container dies loudly at boot
+    instead of serving forgeable tokens indefinitely. Deliberately not
+    done lazily on first use -- by then it's already accepting traffic.
+    """
+    missing = [name for name in _REQUIRED_SETTINGS if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError(f"required settings are not set: {', '.join(missing)}; refusing to start")
+
+    for name in ("JWT_SECRET", "LIVEKIT_API_SECRET", "TURN_SHARED_SECRET"):
+        value = os.environ.get(name)
+        if not value:
+            raise RuntimeError(f"{name} is not set; refusing to start")
+        if value.strip().lower() in _PLACEHOLDER_SECRETS:
+            raise RuntimeError(
+                f"{name} is still set to the placeholder from .env.example; "
+                "generate a real one with `openssl rand -hex 32`"
+            )
+        if len(value) < MIN_SECRET_LENGTH:
+            raise RuntimeError(
+                f"{name} is {len(value)} characters; needs at least {MIN_SECRET_LENGTH}"
+            )
+
+    # §9/.env.example: these are three independent values. Reusing one
+    # means a leak of the weakest-held secret is a leak of all three
+    # trust domains at once -- session forgery, LiveKit admin, and TURN
+    # relay credentials.
+    secrets_in_use = [os.environ[n] for n in ("JWT_SECRET", "LIVEKIT_API_SECRET", "TURN_SHARED_SECRET")]
+    if len(set(secrets_in_use)) != len(secrets_in_use):
+        raise RuntimeError(
+            "JWT_SECRET, LIVEKIT_API_SECRET and TURN_SHARED_SECRET must be three "
+            "independent values, not the same one reused"
+        )
+
+
 def _secret() -> str:
     # Own trust domain, separate from LIVEKIT_API_SECRET (which authenticates
     # server-to-LiveKit admin calls and room-token minting). Session JWTs and
