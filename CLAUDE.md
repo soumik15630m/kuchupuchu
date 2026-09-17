@@ -10,14 +10,21 @@ Private voice/video app for a fixed group of ~10 people, built around an
 India↔Russia link. Design doc: `docs/design-doc-v6.md` — §1a (hosting),
 §3a (layout), §13 (phases and their done-bars).
 
-Phases 1-4 are done and validated. Phases 5-8 are not started;
-`clients/`, `services/wake-service/` and `services/messaging-service/`
-are placeholders until then.
+Phases 1-4 are done and validated. Phase 5 is in progress: the web client
+and messaging service are built and working; `clients/android/` and
+`services/wake-service/` are still placeholders. Messaging (design-doc
+Phase 6) was deliberately pulled forward into the web build, so §13's
+Phase 5/6 split no longer matches what is here.
 
 ## Layout
 
 - `services/auth-service/` — FastAPI + SQLite. Allowlist, OTP, JWTs, devices,
   revocation, prekeys, quality reports.
+- `services/messaging-service/` — FastAPI + SQLite. Store-and-forward for
+  encrypted messages, media blobs, receipts, and the delivery WebSocket. Reads
+  auth-service's SQLite read-only for the device-status check.
+- `clients/web/` — Next.js + TypeScript. Calls (LiveKit + the Phase 4 E2EE
+  stack), messaging (its own bidirectional Double Ratchet), theming.
 - `infra/` — nginx (SNI stream-demux on 443), coturn, livekit, cert generation.
 - `testing/webrtc-harness/` — throwaway browser harness standing in for the
   real clients. Plain ES modules, no build step.
@@ -27,7 +34,9 @@ are placeholders until then.
 
 ```bash
 python -m pytest services/auth-service/tests -q
+cd services/messaging-service && python -m pytest tests -q
 cd testing/webrtc-harness && node --test test/*.test.mjs
+cd clients/web && node --test src/lib/crypto/test/*.test.mjs && npm run build
 ```
 
 ## Bringing the stack up
