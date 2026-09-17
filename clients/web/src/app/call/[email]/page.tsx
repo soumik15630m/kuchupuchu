@@ -10,7 +10,7 @@ import styles from "@/components/call/call.module.css";
 import { deviceId } from "@/lib/api/client";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { CallEngine, type CallState } from "@/lib/call/engine";
-import { displayName, initials, loadContacts } from "@/lib/contacts";
+import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { getGroup, isGroupId } from "@/lib/groups";
 
 function qualityName(q: ConnectionQuality): string {
@@ -33,6 +33,7 @@ export default function CallPage() {
   const search = useSearchParams();
   const router = useRouter();
   const { status, session } = useSession();
+  const { nameFor } = useDirectory();
 
   const peerEmail = decodeURIComponent(params.email);
   const withVideo = search.get("video") === "1";
@@ -48,7 +49,7 @@ export default function CallPage() {
 
   useEffect(() => {
     if (!isGroupId(peerEmail)) {
-      setPeerName(displayName(peerEmail, loadContacts()));
+      setPeerName(nameFor(peerEmail));
       setCallees([peerEmail]);
       return;
     }
@@ -57,7 +58,7 @@ export default function CallPage() {
     // §4 caps a room at 5. The caller is added server-side, so only the other
     // members are named here; a larger group cannot all join one call.
     setCallees(group ? group.members.filter((m) => m !== session?.email) : []);
-  }, [peerEmail, session?.email]);
+  }, [peerEmail, session?.email, nameFor]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -139,7 +140,7 @@ export default function CallPage() {
       {stage === "failed" || stage === "ended" ? (
         <div className={styles.centre}>
           <div>
-            <div className={styles.centreAvatar}>{initials(peerName)}</div>
+            <div className={styles.centreAvatar}>{initialsFor(peerName)}</div>
             <div className={styles.centreName}>{peerName}</div>
             <p className={styles.centreNote}>
               {stage === "failed" ? (state?.error ?? "The call couldn't be connected.") : "Call ended."}
@@ -152,7 +153,7 @@ export default function CallPage() {
       ) : ordered.length === 0 ? (
         <div className={styles.centre}>
           <div>
-            <div className={styles.centreAvatar}>{initials(peerName)}</div>
+            <div className={styles.centreAvatar}>{initialsFor(peerName)}</div>
             <div className={styles.centreName}>{peerName}</div>
             <p className={styles.centreNote}>Ringing…</p>
           </div>

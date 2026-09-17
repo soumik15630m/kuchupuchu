@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
-import { displayName, initials, loadContacts, saveContacts, type Contact } from "@/lib/contacts";
+import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { isGroupId, loadGroups, type Group } from "@/lib/groups";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import type { StoredMessage } from "@/lib/messaging/store";
@@ -37,24 +37,24 @@ function timeLabel(ms: number): string {
 export default function ChatsPage() {
   const router = useRouter();
   const { chats, online, ready } = useMessaging();
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const { others, nameFor } = useDirectory();
   const [groups, setGroups] = useState<Group[]>([]);
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setContacts(loadContacts());
-    setGroups(loadGroups());
-  }, [chats]);
+  useEffect(() => setGroups(loadGroups()), [chats]);
 
   const rows = useMemo(() => {
     type Row = { email: string; name: string; group: boolean; summary: ReturnType<typeof chats.get> };
     const byEmail = new Map<string, Row>();
-    for (const contact of contacts) {
-      byEmail.set(contact.email, {
-        email: contact.email,
-        name: contact.name,
+    // Only members you have actually spoken to appear here; the rest live
+    // behind "new chat" rather than padding the list with empty threads.
+    for (const member of others) {
+      if (!chats.has(member.email)) continue;
+      byEmail.set(member.email, {
+        email: member.email,
+        name: nameFor(member.email),
         group: false,
-        summary: chats.get(contact.email),
+        summary: chats.get(member.email),
       });
     }
     for (const group of groups) {
@@ -71,7 +71,7 @@ export default function ChatsPage() {
       if (!byEmail.has(chatId)) {
         byEmail.set(chatId, {
           email: chatId,
-          name: isGroupId(chatId) ? "Group" : displayName(chatId, contacts),
+          name: isGroupId(chatId) ? "Group" : nameFor(chatId),
           group: isGroupId(chatId),
           summary,
         });
@@ -93,17 +93,7 @@ export default function ChatsPage() {
         r.email.includes(q) ||
         (r.summary?.lastMessage?.body ?? "").toLowerCase().includes(q)
     );
-  }, [contacts, groups, chats, query]);
-
-  function addContact() {
-    const email = prompt("Their email address")?.trim().toLowerCase();
-    if (!email) return;
-    const name = prompt("Name for them")?.trim() || email;
-    const next = [...contacts.filter((c) => c.email !== email), { email, name }];
-    setContacts(next);
-    saveContacts(next);
-    router.push(`/chats/${encodeURIComponent(email)}`);
-  }
+  }, [others, groups, chats, query, nameFor]);
 
   return (
     <AppShell detail={<PaneEmpty>Pick a chat to start reading.</PaneEmpty>}>
@@ -127,7 +117,7 @@ export default function ChatsPage() {
           <PaneScroll>
             {rows.length === 0 && (
               <PaneEmpty>
-                {contacts.length === 0 ? "No chats yet. Add someone to begin." : "No matches."}
+                {query.trim() ? "No matches." : "No chats yet. Start one to begin."}
               </PaneEmpty>
             )}
             {rows.map((row) => (
@@ -137,7 +127,7 @@ export default function ChatsPage() {
                 className={styles.item}
                 onClick={() => router.push(`/chats/${encodeURIComponent(row.email)}`)}
               >
-                <span className={styles.avatar}>{initials(row.name)}</span>
+                <span className={styles.avatar}>{initialsFor(row.name)}</span>
                 <span className={styles.itemBody}>
                   <span className={styles.itemTop}>
                     <span className={styles.itemName}>{row.name}</span>
@@ -156,19 +146,14 @@ export default function ChatsPage() {
             ))}
           </PaneScroll>
 
-          <div className={styles.fabStack}>
-            <button
-              className={styles.fabSmall}
-              type="button"
-              onClick={() => router.push("/chats/new-group")}
-              aria-label="New group"
-            >
-              <Icon name="status" size={20} />
-            </button>
-            <button className={styles.fab} type="button" onClick={addContact} aria-label="New chat">
-              <Icon name="plus" size={24} />
-            </button>
-          </div>
+          <button
+            className={styles.fab}
+            type="button"
+            onClick={() => router.push("/chats/new")}
+            aria-label="New chat"
+          >
+            <Icon name="plus" size={24} />
+          </button>
         </div>
       </Pane>
     </AppShell>

@@ -6,7 +6,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { StatusViewer } from "@/components/status/StatusViewer";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { useSession } from "@/lib/auth/SessionProvider";
-import { displayName, initials, loadContacts, type Contact } from "@/lib/contacts";
+import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { compressImage, makeThumbnail, videoPoster } from "@/lib/messaging/media";
 import type { StatusReel } from "@/lib/messaging/status-store";
@@ -25,7 +25,7 @@ function ago(ms: number): string {
 export default function StatusPage() {
   const { email } = useSession();
   const { client, statuses, refreshStatuses } = useMessaging();
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const { others, nameFor } = useDirectory();
   const [open, setOpen] = useState<StatusReel | null>(null);
   const [composing, setComposing] = useState(false);
   const [text, setText] = useState("");
@@ -34,16 +34,14 @@ export default function StatusPage() {
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => setContacts(loadContacts()), []);
-
   /** Everyone this device knows about. Status has no per-post audience picker;
    * it goes to the same fixed group the app is for (§1). */
   function audience(): string[] {
-    return [...new Set(contacts.map((c) => c.email))];
+    return others.map((m) => m.email);
   }
 
   const mine = statuses.filter((r) => r.outgoing);
-  const others = statuses.filter((r) => !r.outgoing);
+  const theirs = statuses.filter((r) => !r.outgoing);
 
   async function postText() {
     if (!client || !text.trim()) return;
@@ -114,12 +112,12 @@ export default function StatusPage() {
 
   function Row({ reel }: { reel: StatusReel }) {
     const latest = reel.posts[reel.posts.length - 1];
-    const name = reel.outgoing ? "My status" : displayName(reel.authorEmail, contacts);
+    const name = reel.outgoing ? "My status" : nameFor(reel.authorEmail);
     return (
       <button type="button" className={styles.row} onClick={() => setOpen(reel)}>
         <span className={styles.ring} data-unseen={reel.unseen > 0 ? "true" : undefined}>
           <span className={styles.ringInner}>
-            {latest?.media?.thumb ? <img src={latest.media.thumb} alt="" /> : initials(name)}
+            {latest?.media?.thumb ? <img src={latest.media.thumb} alt="" /> : initialsFor(name)}
           </span>
         </span>
         <span className={styles.rowBody}>
@@ -212,10 +210,10 @@ export default function StatusPage() {
             </>
           )}
 
-          {others.length > 0 && (
+          {theirs.length > 0 && (
             <>
               <div className={styles.sectionLabel}>Recent updates</div>
-              {others.map((reel) => (
+              {theirs.map((reel) => (
                 <Row key={reel.authorEmail} reel={reel} />
               ))}
             </>

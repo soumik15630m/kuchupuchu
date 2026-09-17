@@ -6,6 +6,7 @@ import { Icon, type IconName } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { useSession } from "@/lib/auth/SessionProvider";
+import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 
 import styles from "./settings.module.css";
 
@@ -47,19 +48,30 @@ function Row({
 export default function SettingsPage() {
   const router = useRouter();
   const { email, signOut } = useSession();
+  const { me } = useDirectory();
 
   return (
     <AppShell detail={<PaneEmpty>Choose a setting.</PaneEmpty>}>
       <Pane>
         <PaneHeader title="Settings" />
         <PaneScroll>
-          <div className={styles.profile}>
-            <div className={styles.avatar}>{(email ?? "?").charAt(0).toUpperCase()}</div>
-            <div className={styles.who}>
-              <div className={styles.name}>You</div>
-              <div className={styles.email}>{email}</div>
+          <button
+            type="button"
+            className={styles.profile}
+            style={{ width: "100%", textAlign: "left", color: "inherit" }}
+            onClick={() => router.push("/settings/profile")}
+          >
+            <div className={styles.avatar}>
+              {initialsFor(me?.displayName || me?.username || email || "?")}
             </div>
-          </div>
+            <div className={styles.who}>
+              <div className={styles.name}>{me?.displayName || me?.username || "You"}</div>
+              <div className={styles.email}>
+                {me?.username ? `@${me.username}` : email}
+                {me?.about ? ` · ${me.about}` : ""}
+              </div>
+            </div>
+          </button>
 
           <div className={styles.divider} />
 
@@ -68,6 +80,12 @@ export default function SettingsPage() {
             label="Theme"
             note="Colours, wallpaper, font size"
             onClick={() => router.push("/settings/theme")}
+          />
+          <Row
+            icon="settings"
+            label="Profile"
+            note="Username, display name and about"
+            onClick={() => router.push("/settings/profile")}
           />
           <Row
             icon="chats"

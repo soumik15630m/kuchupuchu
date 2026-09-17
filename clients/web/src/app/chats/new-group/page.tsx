@@ -7,7 +7,7 @@ import { Icon } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { useSession } from "@/lib/auth/SessionProvider";
-import { initials, loadContacts, type Contact } from "@/lib/contacts";
+import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { createGroup } from "@/lib/groups";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 
@@ -22,11 +22,9 @@ export default function NewGroupPage() {
   const router = useRouter();
   const { email } = useSession();
   const { refreshChats } = useMessaging();
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const { others, nameFor } = useDirectory();
   const [selected, setSelected] = useState<string[]>([]);
   const [name, setName] = useState("");
-
-  useEffect(() => setContacts(loadContacts()), []);
 
   function toggle(contactEmail: string) {
     setSelected((prev) =>
@@ -66,8 +64,8 @@ export default function NewGroupPage() {
             <h2 className={themeStyles.sectionTitle}>
               Members {selected.length > 0 && `· ${selected.length + 1}`}
             </h2>
-            {contacts.length === 0 && <PaneEmpty>Add contacts in Chats first.</PaneEmpty>}
-            {contacts.map((contact) => {
+            {others.length === 0 && <PaneEmpty>No other members yet.</PaneEmpty>}
+            {others.map((contact) => {
               const on = selected.includes(contact.email);
               return (
                 <button
@@ -78,10 +76,10 @@ export default function NewGroupPage() {
                   className={styles.item}
                   onClick={() => toggle(contact.email)}
                 >
-                  <span className={styles.avatar}>{initials(contact.name)}</span>
+                  <span className={styles.avatar}>{initialsFor(nameFor(contact.email))}</span>
                   <span className={styles.itemBody}>
-                    <span className={styles.itemName}>{contact.name}</span>
-                    <span className={styles.itemPreview}>{contact.email}</span>
+                    <span className={styles.itemName}>{nameFor(contact.email)}</span>
+                    <span className={styles.itemPreview}>{contact.username ? `@${contact.username}` : contact.email}</span>
                   </span>
                   {on && (
                     <span style={{ color: "var(--accent)" }}>

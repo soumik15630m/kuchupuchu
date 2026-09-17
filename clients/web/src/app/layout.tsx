@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
 import { SessionProvider } from "@/lib/auth/SessionProvider";
+import { DirectoryProvider } from "@/lib/directory/DirectoryProvider";
 import { MessagingProvider } from "@/lib/messaging/MessagingProvider";
 import { NO_FLASH_SCRIPT } from "@/lib/theme/apply";
 import { ThemeProvider } from "@/lib/theme/ThemeProvider";
@@ -30,7 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <SessionProvider>
-            <MessagingProvider>{children}</MessagingProvider>
+            <DirectoryProvider>
+              <MessagingProvider>{children}</MessagingProvider>
+            </DirectoryProvider>
           </SessionProvider>
         </ThemeProvider>
       </body>

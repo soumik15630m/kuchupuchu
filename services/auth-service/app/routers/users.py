@@ -17,6 +17,7 @@ from app.usernames import (
     resolve,
     set_profile,
     set_username,
+    validate,
 )
 
 router = APIRouter()
@@ -64,7 +65,20 @@ def get_me(authorization: str | None = Header(default=None)):
 def put_username(body: UsernameBody, authorization: str | None = Header(default=None)):
     email, _ = require_active_device(authorization)
 
-    if not _username_limiter.check(email):
+    # Validate before touching the limiter. A rejected username claims nothing,
+    # so counting typos against the quota would lock someone out of onboarding
+    # for an hour over five misspellings -- with no way into the app, since
+    # having a username is what the shell gates on.
+    try:
+        _, normalized = validate(body.username)
+    except UsernameError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    current = profile_for(email)
+    unchanged = current is not None and current.get("username_normalized") == normalized
+
+    # Re-submitting the handle you already hold is idempotent, not a change.
+    if not unchanged and not _username_limiter.check(email):
         raise HTTPException(status_code=429, detail="too many username changes, try again later")
 
     try:

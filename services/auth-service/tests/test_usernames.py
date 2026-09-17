@@ -150,3 +150,39 @@ def test_these_routes_require_an_active_device(client, fresh_db):
 
     assert client.get("/users/me", headers=headers).status_code == 401
     assert client.get("/users/directory", headers=headers).status_code == 401
+
+
+def test_rejected_attempts_do_not_consume_the_change_quota(client, fresh_db):
+    """Onboarding is gated on having a username, so burning the hourly quota on
+    typos would lock a new member out of the app entirely."""
+    register_device(fresh_db, "a@example.com", "dev-1")
+    headers = {"Authorization": f"Bearer {access_token_for('a@example.com', 'dev-1')}"}
+
+    for bad in ["ad", "admin", ".nope", "has space", "12345", "x" * 40, "..", "1_2"]:
+        assert client.put("/users/me/username", json={"username": bad}, headers=headers).status_code == 400
+
+    res = client.put("/users/me/username", json={"username": "alice"}, headers=headers)
+    assert res.status_code == 200
+
+
+def test_resubmitting_the_same_username_does_not_consume_quota(client, fresh_db):
+    register_device(fresh_db, "a@example.com", "dev-1")
+    headers = {"Authorization": f"Bearer {access_token_for('a@example.com', 'dev-1')}"}
+
+    assert client.put("/users/me/username", json={"username": "alice"}, headers=headers).status_code == 200
+    for _ in range(10):
+        assert client.put("/users/me/username", json={"username": "alice"}, headers=headers).status_code == 200
+
+
+def test_real_changes_are_still_rate_limited(client, fresh_db):
+    """The limit exists so nobody can cycle handles to park every good one
+    behind the release cooldown."""
+    register_device(fresh_db, "a@example.com", "dev-1")
+    headers = {"Authorization": f"Bearer {access_token_for('a@example.com', 'dev-1')}"}
+
+    codes = [
+        client.put("/users/me/username", json={"username": f"alice{i}"}, headers=headers).status_code
+        for i in range(7)
+    ]
+    assert codes.count(200) == 5
+    assert codes[-1] == 429

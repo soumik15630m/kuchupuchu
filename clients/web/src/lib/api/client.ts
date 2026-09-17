@@ -257,6 +257,29 @@ export class Session {
     return this.authed(`/devices/peer/${encodeURIComponent(email)}`);
   }
 
+  me(): Promise<Member> {
+    return this.authed("/users/me");
+  }
+
+  setUsername(username: string): Promise<{ username: string }> {
+    return this.authed("/users/me/username", {
+      method: "PUT",
+      body: JSON.stringify({ username }),
+    });
+  }
+
+  setProfile(patch: { displayName?: string; about?: string }): Promise<Member> {
+    return this.authed("/users/me/profile", { method: "PUT", body: JSON.stringify(patch) });
+  }
+
+  lookupUsername(username: string): Promise<Member> {
+    return this.authed(`/users/lookup/${encodeURIComponent(username)}`);
+  }
+
+  directory(): Promise<{ members: Member[] }> {
+    return this.authed("/users/directory");
+  }
+
   /** The messaging service sits behind a different nginx prefix, so these
    * bypass `authed`'s API_BASE. They still need the same 401-retry, hence
    * `msgAuthed` rather than a bare fetch. */
@@ -328,6 +351,16 @@ export class Session {
       : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${MSG_BASE}`;
     return `${base}/ws?token=${encodeURIComponent(this.accessToken!)}`;
   }
+}
+
+/** A member of the allowlist. `email` is the account identifier the protocol
+ * addresses by; `username` is the handle people actually use. */
+export interface Member {
+  email: string;
+  username: string | null;
+  displayName: string | null;
+  about: string | null;
+  profileUpdatedAt: string | null;
 }
 
 export interface WireMessage {

@@ -6,6 +6,7 @@ import { useEffect } from "react";
 
 import { Icon, type IconName } from "@/components/Icon";
 import { useSession } from "@/lib/auth/SessionProvider";
+import { useDirectory } from "@/lib/directory/DirectoryProvider";
 
 import styles from "./AppShell.module.css";
 
@@ -31,10 +32,18 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
   const { status } = useSession();
+  const { me, loading } = useDirectory();
 
   useEffect(() => {
     if (status === "anonymous") router.replace("/login");
   }, [status, router]);
+
+  // A member with no username yet cannot be addressed by anyone, so setup is
+  // not skippable.
+  useEffect(() => {
+    if (status !== "authenticated" || loading) return;
+    if (me && !me.username) router.replace("/setup");
+  }, [status, loading, me, router]);
 
   if (status !== "authenticated") return null;
 

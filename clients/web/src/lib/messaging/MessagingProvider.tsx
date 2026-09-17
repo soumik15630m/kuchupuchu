@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { deviceId } from "../api/client";
 import { useSession } from "../auth/SessionProvider";
-import { displayName, loadContacts } from "../contacts";
+import { useDirectory } from "../directory/DirectoryProvider";
 import { notifyMessage, setBadge } from "../notifications";
 import { MessagingClient } from "./client";
 import { summaries, type ChatSummary, type StoredMessage } from "./store";
@@ -28,6 +28,7 @@ const MessagingContext = createContext<MessagingContextValue | null>(null);
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const { status, session } = useSession();
+  const { nameFor } = useDirectory();
   const clientRef = useRef<MessagingClient | null>(null);
   const [online, setOnline] = useState(false);
   const [ready, setReady] = useState(false);
@@ -64,7 +65,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
     const client = new MessagingClient(session, deviceId(), {
       onMessage: (message) => {
-        notifyMessage(message, displayName(message.chatId, loadContacts()));
+        notifyMessage(message, nameFor(message.chatId));
         bump();
       },
       onStatus: bump,
@@ -100,7 +101,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setReady(false);
       setOnline(false);
     };
-  }, [status, session, refreshChats, refreshStatuses]);
+  }, [status, session, refreshChats, refreshStatuses, nameFor]);
 
   const value = useMemo<MessagingContextValue>(
     () => ({

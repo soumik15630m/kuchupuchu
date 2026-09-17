@@ -161,7 +161,7 @@ def set_profile(email: str, display_name: str | None, about: str | None) -> None
 
 def profile_for(email: str) -> dict | None:
     row = get_db().execute(
-        """SELECT email, username, display_name, about, profile_updated_at
+        """SELECT email, username, username_normalized, display_name, about, profile_updated_at
            FROM allowlist WHERE email = ?""",
         (email,),
     ).fetchone()

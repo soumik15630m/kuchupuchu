@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { displayName, loadContacts } from "../contacts";
+import { useDirectory } from "../directory/DirectoryProvider";
 import { getGroup, isGroupId, type Group } from "../groups";
 import type { ChatTarget } from "./client";
 
@@ -20,6 +20,7 @@ export interface ResolvedChat {
  * the messaging client sends to. Returns `target: null` for a group this device
  * does not know yet, which is how a deleted or never-received group reads. */
 export function useChatTarget(chatId: string, revision: number): ResolvedChat {
+  const { nameFor, memberFor } = useDirectory();
   const [resolved, setResolved] = useState<ResolvedChat>({
     target: null,
     chatId,
@@ -43,16 +44,18 @@ export function useChatTarget(chatId: string, revision: number): ResolvedChat {
       return;
     }
 
-    const contacts = loadContacts();
+    const member = memberFor(chatId);
     setResolved({
       target: { kind: "direct", email: chatId },
       chatId,
-      title: displayName(chatId, contacts),
-      subtitle: chatId,
+      title: nameFor(chatId),
+      // The handle, not the email: the username is the identifier people
+      // actually exchange.
+      subtitle: member?.username ? `@${member.username}` : chatId,
       group: null,
       audience: [chatId],
     });
-  }, [chatId, revision]);
+  }, [chatId, revision, nameFor, memberFor]);
 
   return resolved;
 }

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { WallpaperPicker } from "@/components/theme/WallpaperPicker";
 import { Pane, PaneHeader, PaneScroll } from "@/components/ui/Pane";
-import { displayName, initials, loadContacts } from "@/lib/contacts";
+import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { deleteGroup, getGroup, isGroupId, saveGroup, type Group } from "@/lib/groups";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { clearChat } from "@/lib/messaging/store";
@@ -23,6 +23,7 @@ export default function ChatSettingsPage() {
   const { theme, setWallpaper } = useTheme();
   const { refreshChats } = useMessaging();
   const { email: myEmail } = useSession();
+  const { nameFor } = useDirectory();
   const [name, setName] = useState(email);
   const [group, setGroup] = useState<Group | null>(null);
   const [cleared, setCleared] = useState(false);
@@ -34,8 +35,8 @@ export default function ChatSettingsPage() {
       setName(found?.name ?? "Group");
       return;
     }
-    setName(displayName(email, loadContacts()));
-  }, [email]);
+    setName(nameFor(email));
+  }, [email, nameFor]);
 
   function renameGroup() {
     if (!group) return;
@@ -58,7 +59,7 @@ export default function ChatSettingsPage() {
         <PaneHeader title={name} subtitle="Chat settings" backHref={`/chats/${encodeURIComponent(email)}`} />
         <PaneScroll>
           <div className={settingsStyles.profile}>
-            <div className={settingsStyles.avatar}>{initials(name)}</div>
+            <div className={settingsStyles.avatar}>{initialsFor(name)}</div>
             <div className={settingsStyles.who}>
               <div className={settingsStyles.name}>{name}</div>
               <div className={settingsStyles.email}>{email}</div>
@@ -73,10 +74,10 @@ export default function ChatSettingsPage() {
                 {group.members.map((member) => (
                   <div key={member} className={themeStyles.radio} style={{ cursor: "default" }}>
                     <span className={settingsStyles.avatar} style={{ width: 34, height: 34, fontSize: 14 }}>
-                      {initials(displayName(member, loadContacts()))}
+                      {initialsFor(nameFor(member))}
                     </span>
                     <span className={themeStyles.radioLabel}>
-                      {member === myEmail ? "You" : displayName(member, loadContacts())}
+                      {member === myEmail ? "You" : nameFor(member)}
                       <span className={themeStyles.radioNote}>{member}</span>
                     </span>
                   </div>
