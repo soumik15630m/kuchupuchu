@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
+import { useSession } from "@/lib/auth/SessionProvider";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import type { StoredMessage } from "@/lib/messaging/store";
 
@@ -118,20 +119,144 @@ function MediaAttachment({ message }: { message: StoredMessage }) {
   );
 }
 
-export function MessageBubble({ message }: { message: StoredMessage }) {
-  return (
-    <div
-      className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in}`}
-      data-kind={message.kind}
-    >
-      {message.kind === "media" && <MediaAttachment message={message} />}
-      {message.kind === "voice" && <VoiceNote message={message} />}
-      {message.body && <span className={styles.body}>{message.body}</span>}
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
-      <span className={styles.meta}>
-        {formatTime(message.sentAtMs)}
-        {message.outgoing && <Ticks status={message.status} />}
-      </span>
+export function MessageBubble({
+  message,
+  onReply,
+  onReact,
+  onDelete,
+}: {
+  message: StoredMessage;
+  onReply?: (message: StoredMessage) => void;
+  onReact?: (message: StoredMessage, emoji: string) => void;
+  onDelete?: (message: StoredMessage) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { email: myEmail } = useSession();
+  const reactions = Object.entries(message.reactions ?? {});
+
+  if (message.deletedForEveryone) {
+    return (
+      <div className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in}`}>
+        <span className={styles.deleted}>
+          <Icon name="camOff" size={13} /> This message was deleted
+        </span>
+        <span className={styles.meta}>{formatTime(message.sentAtMs)}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={styles.bubbleRow} data-outgoing={message.outgoing ? "true" : undefined}>
+      <div
+        className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in}`}
+        data-kind={message.kind}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuOpen(true);
+        }}
+      >
+        {message.replyTo && (
+          <span className={styles.quote}>
+            <span className={styles.quoteWho}>
+              {message.replyTo.fromEmail === myEmail ? "You" : message.replyTo.fromEmail}
+            </span>
+            <span className={styles.quoteBody}>{message.replyTo.body || "Attachment"}</span>
+          </span>
+        )}
+
+        {message.kind === "media" && <MediaAttachment message={message} />}
+        {message.kind === "voice" && <VoiceNote message={message} />}
+        {message.body && <span className={styles.body}>{message.body}</span>}
+
+        <span className={styles.meta}>
+          {formatTime(message.sentAtMs)}
+          {message.outgoing && <Ticks status={message.status} />}
+        </span>
+
+        {reactions.length > 0 && (
+          <span className={styles.reactions}>
+            {reactions.map(([who, emoji]) => (
+              <span key={who} title={who}>
+                {emoji}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+
+      <button
+        type="button"
+        className={styles.bubbleMenuButton}
+        aria-label="Message actions"
+        onClick={() => setMenuOpen((v) => !v)}
+      >
+        <Icon name="chevron" size={14} />
+      </button>
+
+      {menuOpen && (
+        <>
+          <button
+            type="button"
+            className={styles.menuBackdrop}
+            aria-label="Close menu"
+            onClick={() => setMenuOpen(false)}
+          />
+          <div className={styles.bubbleMenu} role="menu">
+            <div className={styles.quickReactions}>
+              {QUICK_REACTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className={styles.quickReaction}
+                  data-active={message.reactions && Object.values(message.reactions).includes(emoji)}
+                  onClick={() => {
+                    onReact?.(message, emoji);
+                    setMenuOpen(false);
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className={styles.menuItem}
+              onClick={() => {
+                onReply?.(message);
+                setMenuOpen(false);
+              }}
+            >
+              Reply
+            </button>
+            {message.body && (
+              <button
+                type="button"
+                className={styles.menuItem}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(message.body);
+                  setMenuOpen(false);
+                }}
+              >
+                Copy
+              </button>
+            )}
+            {message.outgoing && (
+              <button
+                type="button"
+                className={`${styles.menuItem} ${styles.menuDanger}`}
+                onClick={() => {
+                  onDelete?.(message);
+                  setMenuOpen(false);
+                }}
+              >
+                Delete for everyone
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -11,8 +11,42 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/auth";
 export const MSG_BASE = process.env.NEXT_PUBLIC_MSG_BASE ?? "/msg";
 
 const REFRESH_KEY = "kuchupuchu:refresh";
+const ACCESS_KEY = "kuchupuchu:access";
 const DEVICE_KEY = "kuchupuchu:device";
 const EMAIL_KEY = "kuchupuchu:email";
+
+/** Refresh tokens rotate, and presenting a superseded one is treated by the
+ * server as a leak — it revokes every device on the account. Two tabs (or a
+ * StrictMode double-mount) each holding their own Session would otherwise
+ * present the same stored token concurrently and trigger exactly that. */
+const REFRESH_LOCK = "kuchupuchu:refresh-lock";
+
+/** Refresh this long before the access token actually expires, so a request
+ * in flight when it lapses does not 401. */
+const EXPIRY_SKEW_MS = 30_000;
+
+function tokenExpiryMs(token: string): number | null {
+  try {
+    const [, payload] = token.split(".");
+    const claims = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    return typeof claims.exp === "number" ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function isUsable(token: string | null): token is string {
+  if (!token) return false;
+  const expiry = tokenExpiryMs(token);
+  return expiry === null ? false : expiry - EXPIRY_SKEW_MS > Date.now();
+}
+
+async function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
+  // Web Locks is the only cross-tab mutex browsers offer. Where it is missing
+  // the single-instance guard still applies; this is strictly an improvement.
+  if (!navigator.locks?.request) return fn();
+  return navigator.locks.request(REFRESH_LOCK, fn) as Promise<T>;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -74,10 +108,14 @@ export function storedRefreshToken(): string | null {
 export function persistSession(email: string, tokens: Tokens): void {
   localStorage.setItem(EMAIL_KEY, email);
   localStorage.setItem(REFRESH_KEY, tokens.refreshToken);
+  // Stored, not just held in memory, so a second tab can reuse a still-valid
+  // access token instead of racing to rotate the refresh token.
+  localStorage.setItem(ACCESS_KEY, tokens.accessToken);
 }
 
 export function clearSession(): void {
   localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(ACCESS_KEY);
   localStorage.removeItem(EMAIL_KEY);
 }
 
@@ -113,38 +151,48 @@ export async function verifyOtp(email: string, code: string): Promise<Tokens> {
   });
 }
 
-/** Holds the access token in memory only and serialises refreshes, so a burst of
- * parallel calls after expiry produces one refresh rather than N racing ones —
- * which matters here because refresh tokens rotate and the loser of that race
- * presents a superseded token, which the server treats as a leak and responds to
- * by revoking every device on the account. */
+/** Serialises token refresh both within an instance and across tabs, because
+ * refresh tokens rotate: the loser of that race presents a superseded token,
+ * which the server reads as a leak and answers by revoking every device on the
+ * account. Observed for real — two Session instances sharing one stored token
+ * locked both test accounts out. */
 export class Session {
   private accessToken: string | null = null;
-  private refreshToken: string | null = null;
   private inFlight: Promise<string> | null = null;
 
   constructor(
     readonly email: string,
     private readonly onEnded: () => void
   ) {
-    this.refreshToken = storedRefreshToken();
+    const stored = localStorage.getItem(ACCESS_KEY);
+    if (isUsable(stored)) this.accessToken = stored;
   }
 
   adopt(tokens: Tokens): void {
     this.accessToken = tokens.accessToken;
-    this.refreshToken = tokens.refreshToken;
     persistSession(this.email, tokens);
   }
 
   private async refresh(): Promise<string> {
     if (this.inFlight) return this.inFlight;
-    this.inFlight = (async () => {
-      if (!this.refreshToken) throw new SessionEndedError("no refresh token");
+    this.inFlight = withRefreshLock(async () => {
+      // Another tab may have rotated while this call waited for the lock.
+      // Adopting its access token is what keeps a superseded refresh token
+      // from ever reaching the server.
+      const fresh = localStorage.getItem(ACCESS_KEY);
+      if (isUsable(fresh) && fresh !== this.accessToken) {
+        this.accessToken = fresh;
+        return fresh;
+      }
+
+      const refreshToken = storedRefreshToken();
+      if (!refreshToken) throw new SessionEndedError("no refresh token");
+
       let tokens: Tokens;
       try {
         tokens = await request<Tokens>("/token/refresh", {
           method: "POST",
-          body: JSON.stringify({ refreshToken: this.refreshToken }),
+          body: JSON.stringify({ refreshToken }),
         });
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
@@ -156,14 +204,14 @@ export class Session {
       }
       this.adopt(tokens);
       return tokens.accessToken;
-    })().finally(() => {
+    }).finally(() => {
       this.inFlight = null;
     });
     return this.inFlight;
   }
 
   async authed<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!this.accessToken) await this.refresh();
+    if (!isUsable(this.accessToken)) await this.refresh();
     const send = (token: string) =>
       request<T>(path, { ...init, headers: { ...(init.headers ?? {}), authorization: `Bearer ${token}` } });
 
@@ -213,7 +261,7 @@ export class Session {
    * bypass `authed`'s API_BASE. They still need the same 401-retry, hence
    * `msgAuthed` rather than a bare fetch. */
   private async msgAuthed<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!this.accessToken) await this.refresh();
+    if (!isUsable(this.accessToken)) await this.refresh();
     const send = async (token: string): Promise<T> => {
       const res = await fetch(`${MSG_BASE}${path}`, {
         ...init,
@@ -274,7 +322,7 @@ export class Session {
    * access token goes in the query string. It must be the short-lived access
    * token, never the refresh token — this lands in the server's access log. */
   async socketUrl(): Promise<string> {
-    if (!this.accessToken) await this.refresh();
+    if (!isUsable(this.accessToken)) await this.refresh();
     const base = MSG_BASE.startsWith("http")
       ? MSG_BASE.replace(/^http/, "ws")
       : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${MSG_BASE}`;

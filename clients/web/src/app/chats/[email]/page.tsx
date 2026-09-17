@@ -38,6 +38,7 @@ export default function ChatPage() {
   const [name, setName] = useState(email);
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [imageUrl, setImageUrl] = useState<string | undefined>();
+  const [replyTo, setReplyTo] = useState<StoredMessage | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const wp = wallpaperFor(email);
@@ -150,7 +151,12 @@ export default function ChatPage() {
                 return (
                   <div key={message.id} style={{ display: "contents" }}>
                     {separator && <span className={styles.daySeparator}>{separator}</span>}
-                    <MessageBubble message={message} />
+                    <MessageBubble
+                      message={message}
+                      onReply={setReplyTo}
+                      onReact={(target, emoji) => void client?.react(email, target.id, emoji)}
+                      onDelete={(target) => void client?.deleteForEveryone(email, target.id)}
+                    />
                   </div>
                 );
               })}
@@ -164,7 +170,28 @@ export default function ChatPage() {
             </div>
           </div>
 
-          <Composer peerEmail={email} />
+          {replyTo && (
+            <div className={styles.replyBar}>
+              <span className={styles.replyBarBody}>
+                <span className={styles.replyBarWho}>
+                  {replyTo.outgoing ? "You" : name}
+                </span>
+                <span className={styles.replyBarText}>
+                  {replyTo.body || (replyTo.kind === "voice" ? "Voice note" : "Attachment")}
+                </span>
+              </span>
+              <button
+                type="button"
+                className={paneStyles.iconButton}
+                aria-label="Cancel reply"
+                onClick={() => setReplyTo(null)}
+              >
+                <Icon name="plus" size={18} />
+              </button>
+            </div>
+          )}
+
+          <Composer peerEmail={email} replyTo={replyTo} onReplyConsumed={() => setReplyTo(null)} />
         </div>
       </Pane>
     </AppShell>

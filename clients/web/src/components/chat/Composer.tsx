@@ -6,10 +6,19 @@ import { Icon } from "@/components/Icon";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { compressImage, makeThumbnail, pickVoiceMimeType, videoPoster } from "@/lib/messaging/media";
+import type { ReplyRef, StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
 
-export function Composer({ peerEmail }: { peerEmail: string }) {
+export function Composer({
+  peerEmail,
+  replyTo,
+  onReplyConsumed,
+}: {
+  peerEmail: string;
+  replyTo?: StoredMessage | null;
+  onReplyConsumed?: () => void;
+}) {
   const { client } = useMessaging();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,15 +42,26 @@ export function Composer({ peerEmail }: { peerEmail: string }) {
     };
   }, []);
 
+  function replyRef(): ReplyRef | undefined {
+    if (!replyTo) return undefined;
+    return {
+      id: replyTo.id,
+      body: replyTo.body || (replyTo.kind === "voice" ? "Voice note" : "Attachment"),
+      fromEmail: replyTo.fromEmail,
+    };
+  }
+
   async function sendText() {
     const body = draft.trim();
     if (!body || !client) return;
+    const quoted = replyRef();
     setDraft("");
     setError(null);
+    onReplyConsumed?.();
     if (inputRef.current) inputRef.current.style.height = "auto";
     try {
       await client.sendTyping(peerEmail, true);
-      await client.send(peerEmail, { kind: "text", body });
+      await client.send(peerEmail, { kind: "text", body, replyTo: quoted });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't send that.");
     }
@@ -71,10 +91,13 @@ export function Composer({ peerEmail }: { peerEmail: string }) {
         durationMs = poster.durationMs;
       }
 
+      const quoted = replyRef();
+      onReplyConsumed?.();
       const { mediaId, key, iv } = await client.uploadMedia(peerEmail, blob);
       await client.send(peerEmail, {
         kind: "media",
         body: "",
+        replyTo: quoted,
         media: {
           mediaId,
           key,

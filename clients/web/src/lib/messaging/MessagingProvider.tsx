@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { deviceId } from "../api/client";
 import { useSession } from "../auth/SessionProvider";
+import { displayName, loadContacts } from "../contacts";
+import { notifyMessage, setBadge } from "../notifications";
 import { MessagingClient } from "./client";
 import { summaries, type ChatSummary, type StoredMessage } from "./store";
 
@@ -33,7 +35,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   const refreshChats = useCallback(() => {
     summaries()
-      .then(setChats)
+      .then((next) => {
+        setChats(next);
+        let unread = 0;
+        for (const summary of next.values()) unread += summary.unread;
+        setBadge(unread);
+      })
       .catch(() => {});
   }, []);
 
@@ -46,7 +53,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     };
 
     const client = new MessagingClient(session, deviceId(), {
-      onMessage: bump,
+      onMessage: (message) => {
+        notifyMessage(message, displayName(message.chatId, loadContacts()));
+        bump();
+      },
       onStatus: bump,
       onConnectionChange: setOnline,
       onTyping: ({ fromEmail, stopped }) => {

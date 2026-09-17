@@ -6,15 +6,24 @@ import {
   getMessage,
   putMessage,
   type MediaRef,
+  type ReplyRef,
   type StoredMessage,
 } from "./store";
 
 /** The plaintext inside an envelope. Everything user-visible lives here; the
- * server sees only the sealed form. */
+ * server sees only the sealed form.
+ *
+ * `reaction` and `deletion` are control messages rather than bubbles: they
+ * mutate a message that already exists instead of adding one. They travel the
+ * same encrypted path as everything else, so the server cannot tell them
+ * apart from an ordinary message. */
 interface Content {
-  kind: "text" | "media" | "voice";
+  kind: "text" | "media" | "voice" | "reaction" | "deletion";
   body: string;
   media?: MediaRef;
+  replyTo?: ReplyRef;
+  /** Set on `reaction` and `deletion`: the client id of the message acted on. */
+  target?: string;
   sentAtMs: number;
 }
 
@@ -177,6 +186,12 @@ export class MessagingClient {
       return;
     }
 
+    if (content.kind === "reaction" || content.kind === "deletion") {
+      await this.applyControl(content, wire.from_email);
+      await this.acknowledge(wire.id);
+      return;
+    }
+
     const stored: StoredMessage = {
       id: wire.client_msg_id,
       chatId: wire.from_email,
@@ -185,12 +200,46 @@ export class MessagingClient {
       kind: content.kind,
       body: content.body,
       media: content.media,
+      replyTo: content.replyTo,
       sentAtMs: content.sentAtMs || Date.parse(wire.created_at) || Date.now(),
       status: "delivered",
     };
     await putMessage(stored);
     this.events.onMessage(stored);
     await this.acknowledge(wire.id);
+  }
+
+  private async applyControl(content: Content, fromEmail: string): Promise<void> {
+    if (!content.target) return;
+    const target = await getMessage(content.target);
+    // The control can outrun its target across a reconnect, or refer to a
+    // message this device cleared. Dropping it is correct either way.
+    if (!target) return;
+
+    if (content.kind === "deletion") {
+      // Only the author may retract. Without this check a peer could blank
+      // out messages they did not send.
+      if (target.fromEmail !== fromEmail && !(target.outgoing && fromEmail === this.api.email)) return;
+      const updated: StoredMessage = {
+        ...target,
+        body: "",
+        media: undefined,
+        kind: "text",
+        deletedForEveryone: true,
+      };
+      await putMessage(updated);
+      this.events.onStatus(updated);
+      return;
+    }
+
+    const reactions = { ...(target.reactions ?? {}) };
+    // An empty body is how a reaction is taken back.
+    if (content.body) reactions[fromEmail] = content.body;
+    else delete reactions[fromEmail];
+
+    const updated: StoredMessage = { ...target, reactions };
+    await putMessage(updated);
+    this.events.onStatus(updated);
   }
 
   private async acknowledge(serverId: string): Promise<void> {
@@ -221,20 +270,26 @@ export class MessagingClient {
   ): Promise<StoredMessage> {
     const clientMsgId = crypto.randomUUID();
     const sentAtMs = content.sentAtMs ?? Date.now();
+    const isControl = content.kind === "reaction" || content.kind === "deletion";
 
     const stored: StoredMessage = {
       id: clientMsgId,
       chatId: peerEmail,
-      fromEmail: "",
+      fromEmail: this.api.email,
       outgoing: true,
-      kind: content.kind,
+      kind: isControl ? "text" : (content.kind as StoredMessage["kind"]),
       body: content.body,
       media: content.media,
+      replyTo: content.replyTo,
       sentAtMs,
       status: "sending",
     };
-    await putMessage(stored);
-    this.events.onMessage(stored);
+    // A control message has no bubble of its own; the local effect was
+    // already applied optimistically by the caller.
+    if (!isControl) {
+      await putMessage(stored);
+      this.events.onMessage(stored);
+    }
 
     try {
       const plaintext = encodeContent({ ...content, sentAtMs });
@@ -261,18 +316,58 @@ export class MessagingClient {
 
       await this.api.sendMessage({
         client_msg_id: clientMsgId,
-        kind: content.kind,
+        // The server only understands these three; a control message rides as
+        // text because its real kind is inside the ciphertext.
+        kind: isControl ? "text" : content.kind,
         recipients: targets,
       });
 
+      if (isControl) return stored;
       const sent = await advanceStatus(clientMsgId, "sent");
       if (sent) this.events.onStatus(sent);
       return sent ?? stored;
     } catch (err) {
+      if (isControl) throw err;
       const failed = await advanceStatus(clientMsgId, "failed");
       if (failed) this.events.onStatus(failed);
       throw err;
     }
+  }
+
+  /** Applies the reaction locally first so the tap feels immediate, then
+   * mirrors it to the peer. */
+  async react(peerEmail: string, targetId: string, emoji: string): Promise<void> {
+    const target = await getMessage(targetId);
+    if (!target) return;
+
+    const reactions = { ...(target.reactions ?? {}) };
+    const mine = reactions[this.api.email];
+    const next = mine === emoji ? "" : emoji;
+    if (next) reactions[this.api.email] = next;
+    else delete reactions[this.api.email];
+
+    const updated = { ...target, reactions };
+    await putMessage(updated);
+    this.events.onStatus(updated);
+
+    await this.send(peerEmail, { kind: "reaction", body: next, target: targetId });
+  }
+
+  async deleteForEveryone(peerEmail: string, targetId: string): Promise<void> {
+    const target = await getMessage(targetId);
+    if (!target || !target.outgoing) return;
+
+    const updated: StoredMessage = {
+      ...target,
+      body: "",
+      media: undefined,
+      kind: "text",
+      deletedForEveryone: true,
+    };
+    await putMessage(updated);
+    this.events.onStatus(updated);
+
+    await this.send(peerEmail, { kind: "deletion", body: "", target: targetId });
   }
 
   async markRead(chatId: string, clientMsgIds: string[]): Promise<void> {

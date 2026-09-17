@@ -17,6 +17,15 @@ export interface MediaRef {
   thumb?: string;
 }
 
+/** No `outgoing` flag: the same ref is stored locally and sent on the wire, so
+ * a boolean would be right for exactly one of the two sides. Each side derives
+ * it by comparing `fromEmail` against its own address. */
+export interface ReplyRef {
+  id: string;
+  body: string;
+  fromEmail: string;
+}
+
 export interface StoredMessage {
   id: string;
   chatId: string;
@@ -25,9 +34,13 @@ export interface StoredMessage {
   kind: "text" | "media" | "voice";
   body: string;
   media?: MediaRef;
+  replyTo?: ReplyRef;
   sentAtMs: number;
   status: MessageStatus;
+  /** Emoji keyed by the member who reacted, so one person cannot stack
+   * several reactions on the same message. */
   reactions?: Record<string, string>;
+  deletedForEveryone?: boolean;
 }
 
 export interface ChatSummary {

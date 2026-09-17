@@ -398,3 +398,198 @@
   font-size: calc(12px * var(--font-scale));
   text-align: center;
 }
+
+/* Message actions */
+.bubbleRow {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.bubbleRow[data-outgoing="true"] {
+  flex-direction: row-reverse;
+  align-self: flex-end;
+}
+
+.bubbleRow:not([data-outgoing="true"]) {
+  align-self: flex-start;
+}
+
+.bubbleMenuButton {
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  flex: none;
+}
+
+.bubbleRow:hover .bubbleMenuButton,
+.bubbleMenuButton:focus-visible {
+  opacity: 1;
+}
+
+/* A hover-only affordance is unreachable on touch, where long-press opens the
+   same menu -- but there is no hover to reveal the button, so it stays shown. */
+@media (pointer: coarse) {
+  .bubbleMenuButton {
+    opacity: 1;
+  }
+}
+
+.menuBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  cursor: default;
+}
+
+.bubbleMenu {
+  position: absolute;
+  z-index: 9;
+  top: 100%;
+  min-width: 190px;
+  padding: 6px;
+  border-radius: var(--radius-card);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-3);
+}
+
+.bubbleRow[data-outgoing="true"] .bubbleMenu {
+  right: 0;
+}
+
+.bubbleRow:not([data-outgoing="true"]) .bubbleMenu {
+  left: 0;
+}
+
+.quickReactions {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quickReaction {
+  flex: 1;
+  aspect-ratio: 1;
+  font-size: 19px;
+  border-radius: var(--radius-bubble);
+  line-height: 1;
+}
+
+.quickReaction:hover,
+.quickReaction[data-active="true"] {
+  background: var(--accent-soft);
+}
+
+.menuItem {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  border-radius: var(--radius-bubble);
+  font-size: calc(14px * var(--font-scale));
+  color: var(--ink);
+}
+
+.menuItem:hover {
+  background: var(--bg-hover);
+}
+
+.menuDanger {
+  color: var(--danger);
+}
+
+.reactions {
+  position: absolute;
+  bottom: -10px;
+  right: 8px;
+  display: flex;
+  gap: 1px;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: var(--shadow-1);
+}
+
+.quote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: calc(12.5px * var(--font-scale));
+}
+
+:global([data-theme="dark"]) .quote {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.quoteWho {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.quoteBody {
+  color: var(--bubble-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.deleted {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-style: italic;
+  color: var(--bubble-meta);
+}
+
+/* Reply preview above the composer */
+.replyBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.replyBarBody {
+  flex: 1;
+  min-width: 0;
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+
+.replyBarWho {
+  display: block;
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.replyBarText {
+  display: block;
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

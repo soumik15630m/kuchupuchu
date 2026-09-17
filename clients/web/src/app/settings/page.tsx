@@ -70,6 +70,12 @@ export default function SettingsPage() {
             onClick={() => router.push("/settings/theme")}
           />
           <Row
+            icon="chats"
+            label="Notifications"
+            note="Alerts for new messages"
+            onClick={() => router.push("/settings/notifications")}
+          />
+          <Row
             icon="shield"
             label="Linked devices"
             note="Review and revoke your devices"
