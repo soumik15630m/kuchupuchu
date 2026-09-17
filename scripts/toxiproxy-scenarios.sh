@@ -27,12 +27,26 @@ cmd="${1:-}"
 
 case "$cmd" in
     setup)
+        # Reachability is checked separately from creation. Collapsing
+        # both into one "(already exists, or toxiproxy isn't reachable)"
+        # message meant a stack that wasn't running at all looked
+        # identical to a proxy that was already set up -- so every later
+        # scenario would quietly do nothing, and the call under test
+        # would look like it had survived a cut that never happened.
+        if ! curl -sf -o /dev/null "${TOXIPROXY_URL}/proxies"; then
+            echo "toxiproxy is not reachable at ${TOXIPROXY_URL}." >&2
+            echo "Start it with: docker compose -f docker-compose.yml -f docker-compose.testing.yml up -d" >&2
+            exit 1
+        fi
+        if curl -sf -o /dev/null "${TOXIPROXY_URL}/proxies/${PROXY_NAME}"; then
+            echo "Proxy '${PROXY_NAME}' already exists — nothing to do."
+            exit 0
+        fi
         echo "Creating toxiproxy proxy '${PROXY_NAME}' -> ${UPSTREAM}..."
         curl -sf -X POST "${TOXIPROXY_URL}/proxies" \
             -H 'Content-Type: application/json' \
-            -d "{\"name\":\"${PROXY_NAME}\",\"listen\":\"${LISTEN}\",\"upstream\":\"${UPSTREAM}\"}" \
-            && echo "Created." \
-            || echo "(already exists, or toxiproxy isn't reachable at ${TOXIPROXY_URL})"
+            -d "{\"name\":\"${PROXY_NAME}\",\"listen\":\"${LISTEN}\",\"upstream\":\"${UPSTREAM}\"}" > /dev/null
+        echo "Created."
         ;;
 
     cut)
@@ -41,7 +55,16 @@ case "$cmd" in
         curl -sf -X POST "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics" \
             -H 'Content-Type: application/json' \
             -d '{"name":"hard-cut","type":"timeout","stream":"downstream","attributes":{"timeout":0}}' > /dev/null
+        # Ctrl-C during the sleep below used to leave the TURN/TLS path
+        # cut indefinitely, with nothing on screen saying so -- every
+        # subsequent test would then be running against a severed relay
+        # path and blaming it on something else.
+        restore_cut() {
+            curl -sf -X DELETE "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics/hard-cut" > /dev/null 2>&1 || true
+        }
+        trap 'echo; echo "Interrupted — removing the cut."; restore_cut; exit 130' INT TERM
         sleep "$SECONDS_DOWN"
+        trap - INT TERM
         curl -sf -X DELETE "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics/hard-cut" > /dev/null
         echo "Restored. Check whether ICE restart recovered the call without a full drop."
         ;;
@@ -59,11 +82,21 @@ case "$cmd" in
     restore)
         echo "Removing all active toxics on '${PROXY_NAME}'..."
         toxics_json="$(curl -sf "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics")"
+        # `tr -d '\r'` is load-bearing on Windows. Python writes text in
+        # text mode, so on Git Bash/MSYS every name comes back with a
+        # trailing CR that `read -r` faithfully preserves -- and the CR
+        # then ends up inside the DELETE URL:
+        #     curl -sf -X DELETE '.../toxics/added-latency\r'
+        # curl rejects that as a malformed URL (exit 3), which under
+        # `set -e` aborted the whole command. The net effect was that
+        # `restore` never removed anything on Windows while looking like
+        # it had started to: the toxic stayed applied, silently degrading
+        # every subsequent test on that path.
         echo "$toxics_json" | python3 -c '
 import json, sys
 names = [t["name"] for t in json.load(sys.stdin)]
 print("\n".join(names))
-' | while read -r toxic; do
+' | tr -d '\r' | while read -r toxic; do
             [ -z "$toxic" ] && continue
             curl -sf -X DELETE "${TOXIPROXY_URL}/proxies/${PROXY_NAME}/toxics/${toxic}" > /dev/null
             echo "  removed: ${toxic}"

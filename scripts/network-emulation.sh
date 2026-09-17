@@ -57,17 +57,35 @@ IFACE="$1"
 CLIENT_IP="$2"
 shift 2
 
+# `shift 2` on a flag that was passed without its value would run off the
+# end of "$@"; with `set -u` that's an unbound-variable abort with no
+# indication of which flag was malformed.
+require_value() {
+    if [ "$#" -lt 2 ]; then
+        echo "Option $1 requires a value." >&2
+        exit 1
+    fi
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --delay) DELAY_MS="$2"; shift 2 ;;
-        --jitter) JITTER_MS="$2"; shift 2 ;;
-        --loss) LOSS_PCT="$2"; shift 2 ;;
+        --delay) require_value "$@"; DELAY_MS="$2"; shift 2 ;;
+        --jitter) require_value "$@"; JITTER_MS="$2"; shift 2 ;;
+        --loss) require_value "$@"; LOSS_PCT="$2"; shift 2 ;;
         --block-udp) BLOCK_UDP=1; shift ;;
-        --media-ports) MEDIA_PORTS="$2"; shift 2 ;;
+        --media-ports) require_value "$@"; MEDIA_PORTS="$2"; shift 2 ;;
         --clear) CLEAR=1; shift ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
+
+# The IP is substituted into tc/iptables arguments and into the state
+# file; validate its shape rather than assuming whatever was typed is an
+# address. This also keeps it safe to use in the grep pattern below.
+if ! printf '%s' "$CLIENT_IP" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    echo "client-ip '${CLIENT_IP}' is not a dotted-quad IPv4 address." >&2
+    exit 1
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Must run as root (tc + iptables need it)." >&2
@@ -135,7 +153,9 @@ clear_rules() {
     while iptables -D OUTPUT -d "$CLIENT_IP" -p udp \
         --dport "$MEDIA_PORTS" -m comment --comment "$COMMENT" -j DROP 2>/dev/null; do :; done
     # Drop this IP's line from the state file now that its rules are gone.
-    grep -v "^${CLIENT_IP} " "$STATE_FILE" > "${STATE_FILE}.tmp" 2>/dev/null || true
+    # -F: the IP is data, not a pattern -- unanchored dots in a regex match
+    # any character, so "192.168.1.4" would also match "192x168y1z4".
+    grep -vF "${CLIENT_IP} " "$STATE_FILE" > "${STATE_FILE}.tmp" 2>/dev/null || true
     mv "${STATE_FILE}.tmp" "$STATE_FILE"
     echo "Done."
 }
@@ -164,8 +184,17 @@ tc qdisc add dev "$IFACE" parent "$CLASS_ID" handle "${HANDLE_ID}:" netem \
     delay "${DELAY_MS}ms" "${JITTER_MS}ms" distribution normal \
     loss "${LOSS_PCT}%"
 
-tc filter add dev "$IFACE" parent 1: protocol ip prio 1 \
-    u32 match ip dst "$CLIENT_IP" flowid "$CLASS_ID" 2>/dev/null || true
+# NOT `|| true`. This filter is what actually directs the target's traffic
+# into the shaped class -- without it the netem qdisc above exists but
+# nothing is routed through it, so the script reports success while doing
+# absolutely nothing. Phase 3's status notes record UDP-blocking as "not
+# cleanly exercisable" on this setup; a filter that fails silently is
+# exactly how you end up writing that sentence. Re-adding an identical
+# filter is the one benign failure, so check for it explicitly first.
+if ! tc filter show dev "$IFACE" parent 1: | grep -q "flowid ${CLASS_ID}"; then
+    tc filter add dev "$IFACE" parent 1: protocol ip prio 1 \
+        u32 match ip dst "$CLIENT_IP" flowid "$CLASS_ID"
+fi
 
 if [ "$BLOCK_UDP" -eq 1 ]; then
     iptables -C OUTPUT -d "$CLIENT_IP" -p udp --dport "$MEDIA_PORTS" \

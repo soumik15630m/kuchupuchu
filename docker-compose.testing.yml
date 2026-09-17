@@ -26,9 +26,12 @@
 
 services:
   toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:2.9.0
+    # Digest-pinned -- see the note at the top of infra/nginx/Dockerfile.
+    image: ghcr.io/shopify/toxiproxy:2.9.0@sha256:b44c283298cea49e2defaba1b3028783798346f2a926684e3a345fd8441af3b8
     ports:
-      - "8474:8474"   # toxiproxy's control API — scripts/toxiproxy-scenarios.sh talks to this
+      # toxiproxy's control API has no authentication; 0.0.0.0 exposed
+      # fault injection to the whole LAN.
+      - "127.0.0.1:8474:8474"
     restart: unless-stopped
 
   nginx:
@@ -36,3 +39,10 @@ services:
       - TURN_BACKEND_HOST=toxiproxy
     depends_on:
       - toxiproxy
+
+  # On a single host the SFU's address falls inside a range
+  # turnserver.conf.template denies, so coturn allocates and then
+  # relays nothing. The base stack leaves this unset.
+  coturn:
+    environment:
+      - TURN_ALLOWED_PEER_IPS=${TURN_ALLOWED_PEER_IPS:-172.16.0.0-172.31.255.255}
