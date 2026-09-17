@@ -10,6 +10,32 @@ from app.db import get_db
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
+# Applied in filename order and recorded by filename, so two files
+# sharing a numeric prefix are ordered by the rest of the name. Four
+# had collided on 004/005; they're renumbered now, and this map keeps
+# a database that recorded the old name from re-applying the same SQL
+# under the new one.
+_RENAMED_MIGRATIONS = {
+    "005_refresh_token_rotation.sql": "004_refresh_token_rotation.sql",
+    "006_phase4_identity_dh_key.sql": "005_phase4_identity_dh_key.sql",
+    "007_quality_reports_retention_index.sql": "005_quality_reports_retention_index.sql",
+    "008_admin_revoke.sql": "006_admin_revoke.sql",
+}
+
+
+def _assert_unique_prefixes(paths: list[Path]) -> None:
+    """Fails loudly if two migrations share a numeric prefix, rather than
+    letting the ambiguity sit there until it silently matters."""
+    seen: dict[str, str] = {}
+    for path in paths:
+        prefix = path.name.split("_", 1)[0]
+        if prefix in seen:
+            raise RuntimeError(
+                f"migrations {seen[prefix]} and {path.name} share the prefix {prefix!r}; "
+                "renumber one of them so the apply order is unambiguous"
+            )
+        seen[prefix] = path.name
+
 
 def run_migrations() -> None:
     db = get_db()
@@ -25,13 +51,33 @@ def run_migrations() -> None:
 
     applied = {row["filename"] for row in db.execute("SELECT filename FROM _migrations")}
 
-    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+    paths = sorted(MIGRATIONS_DIR.glob("*.sql"))
+    _assert_unique_prefixes(paths)
+
+    for path in paths:
         if path.name in applied:
             continue
+        former_name = _RENAMED_MIGRATIONS.get(path.name)
+        if former_name is not None and former_name in applied:
+            # Already applied under its old name -- record the new one so
+            # this lookup isn't needed again, but don't re-run the SQL.
+            print(f"[migrate] {path.name} already applied as {former_name}; recording rename")
+            db.execute("INSERT INTO _migrations (filename) VALUES (?)", (path.name,))
+            db.commit()
+            continue
         print(f"[migrate] applying {path.name}")
-        db.executescript(path.read_text())
+        # executescript() commits before running, so the schema change
+        # and the row recording it cannot share a transaction. Writing
+        # the row first inverts the failure into one that rolls back.
+        db.execute("BEGIN IMMEDIATE")
         db.execute("INSERT INTO _migrations (filename) VALUES (?)", (path.name,))
         db.commit()
+        try:
+            db.executescript(path.read_text())
+        except Exception:
+            db.execute("DELETE FROM _migrations WHERE filename = ?", (path.name,))
+            db.commit()
+            raise
 
     seed_allowlist(db)
     seed_admins(db)
