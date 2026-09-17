@@ -78,6 +78,23 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
     }
 
+    # Messaging service (§10.4/§10.5). /msg/ws is a WebSocket, so this
+    # location needs the upgrade headers and a long read timeout -- without
+    # them nginx closes the live delivery channel after 60s of quiet and the
+    # client falls back to polling forever.
+    location /msg/ {
+        proxy_pass http://messaging-service:8090/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
+        # Media uploads are bounded at 25MB server side (app/media.py);
+        # nginx's own default of 1m would reject them before they got there.
+        client_max_body_size 26m;
+    }
+
     location /healthz {
         return 200 "ok\n";
         add_header Content-Type text/plain;

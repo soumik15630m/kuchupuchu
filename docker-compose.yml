@@ -105,6 +105,22 @@ services:
       - livekit
     restart: unless-stopped
 
+  messaging-service:
+    build: ./services/messaging-service
+    env_file: .env
+    volumes:
+      # Same volume as auth-service: this service opens auth.sqlite read-only
+      # to check device status on every request (see app/db.py's get_auth_db)
+      # and writes only its own messaging.sqlite and media/ alongside it.
+      - sqlite-data:/data
+    environment:
+      - MESSAGING_DB_PATH=/data/messaging.sqlite
+      - AUTH_DB_PATH=/data/app.db
+      - MEDIA_PATH=/data/media
+    depends_on:
+      - auth-service
+    restart: unless-stopped
+
 volumes:
   redis-data:
   sqlite-data:
