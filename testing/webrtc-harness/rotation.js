@@ -1,35 +1,45 @@
 // §6.1/§13 Phase 4: group call room-key rotation.
 //
-// Split deliberately into two pieces:
-//   - This file: pure decision logic (who rotates, has the room
-//     converged on one key or not). No network calls, no crypto, no
-//     LiveKit -- which means it's the part that's actually practical to
-//     unit test exhaustively, including the timing/tie-break edge cases
-//     that are easy to get subtly wrong and hard to catch by eyeballing
-//     a live call.
-//   - group-e2ee.js: wires this logic to real X3DH sessions, the
-//     transport chain, LiveKit's data channel, and the key provider.
+// Pure decision logic -- no network, crypto or LiveKit -- so the
+// timing and tie-break cases are practical to unit test exhaustively.
+// group-e2ee.js wires it to real sessions and the data channel.
 
 /** Deterministically picks which participant is responsible for
  * generating and distributing the room key: earliest `joinedAtMs`,
  * ties broken by ascending identity string. `participants` must include
  * the local participant -- this returns whoever's turn it is, and the
  * caller compares that against its own identity to decide whether it's
- * "me". */
+ * "me".
+ *
+ * A null/undefined `joinedAtMs` (LiveKit hasn't populated `joinedAt` for
+ * that participant yet) sorts LAST, not first. The caller used to
+ * substitute 0, which is the worst possible choice: 0 is earlier than
+ * every real timestamp, so the one participant whose join time hadn't
+ * arrived yet would win the election outright, and two clients
+ * disagreeing about whose timestamp is known would each elect a
+ * different rotator and both start minting room keys. Sorting unknowns
+ * last means an unknown join time can only ever lose to a known one,
+ * and if every participant's is unknown the identity tie-break still
+ * gives every client the same answer. */
 export function electRotator(participants) {
   if (participants.length === 0) {
     throw new Error("electRotator called with no participants -- caller should not invoke this before joining");
   }
+  const rank = (p) => (p.joinedAtMs === null || p.joinedAtMs === undefined ? Infinity : p.joinedAtMs);
   const sorted = [...participants].sort((a, b) => {
-    if (a.joinedAtMs !== b.joinedAtMs) return a.joinedAtMs - b.joinedAtMs;
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
     return a.identity < b.identity ? -1 : a.identity > b.identity ? 1 : 0;
   });
   return sorted[0].identity;
 }
 
-// §6.1's stated threshold: "on a >50% mismatch, one silent auto-re-
-// rotation, then an explicit rejoin prompt if it still disagrees."
-const MISMATCH_RETRY_THRESHOLD = 0.5;
+// §6.1 states the threshold as ">50% mismatch". Taken literally that
+// means an even split reports success: in a 4-way call, two peers on a
+// different key is exactly 0.5, and half the room cannot decrypt the
+// other half. The majority framing is right for deciding who the odd
+// one out is, wrong for deciding whether anything is wrong at all --
+// so any disagreement triggers the retry-then-prompt sequence.
+const MISMATCH_RETRY_THRESHOLD = 0;
 
 /** Tracks fingerprint agreement for one room-key generation across the
  * other participants in the call, and decides what §6.1's retry policy

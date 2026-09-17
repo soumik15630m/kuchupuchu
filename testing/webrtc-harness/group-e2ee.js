@@ -14,16 +14,25 @@ import {
   generateMoreOneTimePrekeys,
   initiateSession,
   respondToSession,
+  verifyIdentityDhKey,
   base64Encode,
   base64Decode,
+  concatBytes,
   computeIdentitySafetyNumber,
 } from "./signal-crypto.js";
-import { initTransportChain, fingerprint, seal, open } from "./double-ratchet.js";
+import { initTransportChain, fingerprint, fingerprintProof, seal, open } from "./double-ratchet.js";
 import { electRotator, FingerprintConvergence } from "./rotation.js";
 
 export const DATA_TOPIC = "kuchupuchu-e2ee";
 const ONE_TIME_PREKEY_LOW_WATER_MARK = 5;
 const ONE_TIME_PREKEY_TOP_UP_COUNT = 20;
+
+// Not 4 hex chars, so it can never collide with a real fingerprint.
+const FINGERPRINT_DISAGREES = "!!";
+
+// Honoring a reset costs us a bundle fetch plus an X3DH run; sending one
+// costs the peer a single message.
+const SESSION_RESET_COOLDOWN_MS = 3000;
 
 function textEncode(obj) {
   return new TextEncoder().encode(JSON.stringify(obj));
@@ -40,6 +49,9 @@ export class GroupE2EE {
    *   Should call room.localParticipant.publishData(payloadBytes, { reliable: true, topic: DATA_TOPIC, destinationIdentities: targetIdentities }).
    * @param {(email: string, deviceId: string) => Promise<object>} deps.fetchBundle
    *   Should GET /prekeys/{email}/{deviceId} with the caller's own bearer token and return the parsed JSON body.
+   * @param {(email: string, deviceId: string) => Promise<object>} deps.fetchIdentity
+   *   GET /prekeys/{email}/{deviceId}/identity. Does not consume a
+   *   one-time prekey; see _verifyClaimedIdentity.
    * @param {(deviceIdentity: string) => string} deps.emailForIdentity
    *   Testing-harness concession: a real client already knows this from its own device directory; this harness asks the operator for a small roster instead of building one. See README.
    * @param {(fp: string, generation: number) => void} [deps.onFingerprintChanged]
@@ -49,6 +61,9 @@ export class GroupE2EE {
    *   should actually be compared out-of-band. See
    *   signal-crypto.js's computeIdentitySafetyNumber for why the two
    *   are not the same thing.
+   * @param {(identity: object) => void|Promise<void>} [deps.onIdentityChanged]
+   *   Fired when the identity is mutated (a one-time prekey consumed).
+   *   Persisting callers must re-save, or a reload resurrects a spent key.
    * @param {() => void} [deps.onRejoinNeeded] - §6.1: called when a mismatch survives one retry.
    * @param {(unreachedPeerIdentities: string[]) => void} [deps.onPartialRotationFailure]
    *   Called when a rotation succeeded overall but one or more peers
@@ -60,19 +75,29 @@ export class GroupE2EE {
     keyProvider,
     sendData,
     fetchBundle,
+    fetchIdentity,
     emailForIdentity,
     onFingerprintChanged,
     onIdentitySafetyNumber,
+    onIdentityChanged,
     onRejoinNeeded,
     onPartialRotationFailure,
     bundleFetchRetryDelaysMs = [400, 900, 1800],
   }) {
+    // Without this, a missing dep surfaces as a TypeError inside a data
+    // handler, only once a peer happens to talk to us.
+    if (typeof fetchIdentity !== "function") {
+      throw new Error("GroupE2EE requires a fetchIdentity dependency -- see _verifyClaimedIdentity");
+    }
+
     this.keyProvider = keyProvider;
     this.sendData = sendData;
     this.fetchBundle = fetchBundle;
+    this.fetchIdentity = fetchIdentity;
     this.emailForIdentity = emailForIdentity;
     this.onFingerprintChanged = onFingerprintChanged ?? (() => {});
     this.onIdentitySafetyNumber = onIdentitySafetyNumber ?? (() => {});
+    this.onIdentityChanged = onIdentityChanged ?? (() => {});
     this.onRejoinNeeded = onRejoinNeeded ?? (() => {});
     this.onPartialRotationFailure = onPartialRotationFailure ?? (() => {});
     this._bundleFetchRetryDelaysMs = bundleFetchRetryDelaysMs;
@@ -85,18 +110,14 @@ export class GroupE2EE {
     this.convergence = null;
     this.lastParticipants = null;
     this.lastParticipantIdentities = null;
-    // The rotator (only) holds onto the current room key so it can be
-    // re-delivered to a single peer whose session state was lost --
-    // e.g. that peer reconnected on its own, wiping its in-memory
-    // GroupE2EE instance, while we (the rotator) didn't. Without this,
-    // that peer would be stuck needing a full re-rotation (triggered by
-    // some unrelated membership change) just to recover from its own
-    // reconnect. See handleDataMessage's "session-reset" handling.
+    // The rotator re-delivers it after a peer's lone reconnect; everyone
+    // else needs it to verify inbound fingerprint proofs.
     this.currentRoomKey = null;
     // Tracks in-flight session-reset requests we've sent, so a peer that
     // never responds doesn't leave us waiting forever -- see
     // _requestSessionReset.
     this._pendingSessionResets = new Map(); // peerIdentity -> timeout id
+    this._lastHonoredSessionReset = new Map(); // peerIdentity -> ms timestamp
   }
 
   async initialize(myDeviceIdentity, existingIdentity = null) {
@@ -150,9 +171,13 @@ export class GroupE2EE {
 
     const email = this.emailForIdentity(peerIdentity);
     const bundle = await this._fetchBundleWithRetry(email, peerIdentity);
-    const { sharedSecret, bootstrapDh, initialMessage } = await initiateSession(this.identity, bundle);
+    const { sharedSecret, bootstrapDh, associatedData, initialMessage } = await initiateSession(
+      this.identity,
+      bundle
+    );
     const chain = await initTransportChain(sharedSecret, bootstrapDh);
-    const session = { chain };
+    // associatedData (IK_A || IK_B) binds the AEAD to this identity pair.
+    const session = { chain, associatedData };
     this.sessions.set(peerIdentity, session);
 
     const myRaw = await crypto.subtle.exportKey("raw", this.identity.signingKeyPair.publicKey);
@@ -163,24 +188,65 @@ export class GroupE2EE {
     return { session, freshInitialMessage: initialMessage };
   }
 
+  /** Load-bearing, not defence in depth. `identity_key` is public, so an
+   * attacker in the room can copy a victim's verbatim while substituting
+   * their own `identity_dh_key` -- and the safety number, which hashes
+   * only the claimed identity_key, still matches the victim. Binding the
+   * two via the server's signature is the only thing that catches it.
+   * The signature is re-checked here because the server is precisely the
+   * party X3DH must not have to trust. */
+  async _verifyClaimedIdentity(fromIdentity, initialMessage) {
+    const email = this.emailForIdentity(fromIdentity);
+    const onFile = await this.fetchIdentity(email, fromIdentity);
+
+    if (onFile.identity_key !== initialMessage.identity_key) {
+      throw new Error(
+        `X3DH initial message from ${fromIdentity} claims an identity key that does not match ` +
+          "the one this device published -- refusing to establish a session"
+      );
+    }
+    if (onFile.identity_dh_key.public_key !== initialMessage.identity_dh_key) {
+      throw new Error(
+        `X3DH initial message from ${fromIdentity} carries an identity_dh_key that does not match ` +
+          "the signed one this device published -- refusing to establish a session"
+      );
+    }
+    await verifyIdentityDhKey(onFile.identity_key, onFile.identity_dh_key);
+  }
+
   async _handleIncomingInitialMessage(fromIdentity, initialMessage) {
     if (this.sessions.has(fromIdentity)) return; // already established, e.g. a duplicate retransmit
-    const { sharedSecret, bootstrapDh } = await respondToSession(this.identity, initialMessage);
+
+    await this._verifyClaimedIdentity(fromIdentity, initialMessage);
+
+    const { sharedSecret, bootstrapDh, associatedData } = await respondToSession(this.identity, initialMessage);
     const chain = await initTransportChain(sharedSecret, bootstrapDh);
-    const session = { chain };
+    const session = { chain, associatedData };
     this.sessions.set(fromIdentity, session);
 
-    // Note: this is computed over whatever identity_key the initiator
-    // claimed in their message, not independently re-verified against
-    // the server (see this module's audit notes). That's not a gap this
-    // safety number papers over -- it's exactly the case the safety
-    // number exists to catch: if this value doesn't match what the
-    // human on the other end expects, THAT mismatch is the signal that
-    // something substituted an identity somewhere in the chain.
+    // respondToSession just deleted the one-time prekey it consumed.
+    // Tell the caller so a persisted copy is updated -- otherwise a
+    // reload restores a spent key and the replay protection in
+    // respondToSession is defeated by refreshing the page.
+    if (initialMessage.used_one_time_prekey_id !== null && initialMessage.used_one_time_prekey_id !== undefined) {
+      await this.onIdentityChanged(this.identity);
+    }
+
+    // Compared out of band, this catches a server that substituted
+    // identity material for both sides at once -- the case
+    // _verifyClaimedIdentity cannot see.
     const myRaw = await crypto.subtle.exportKey("raw", this.identity.signingKeyPair.publicKey);
     const safetyNumber = await computeIdentitySafetyNumber(myRaw, base64Decode(initialMessage.identity_key));
     session.identitySafetyNumber = safetyNumber;
     this.onIdentitySafetyNumber(fromIdentity, safetyNumber);
+  }
+
+  /** Identity half stops a blob being replayed into a different pair's
+   * session; generation half stops replay within the same session. */
+  _adFor(session, generation) {
+    return new Uint8Array(
+      concatBytes(session.associatedData, new TextEncoder().encode(`|generation:${generation}`))
+    );
   }
 
   /** Call on ParticipantConnected/ParticipantDisconnected (and once on
@@ -223,7 +289,7 @@ export class GroupE2EE {
   async _sealAndSendRoomKey(peerIdentity, roomKey, gen) {
     const { session, freshInitialMessage } = await this._ensureSession(peerIdentity);
     const key = await session.chain.keyForGeneration(gen);
-    const ad = new TextEncoder().encode(`generation:${gen}`);
+    const ad = this._adFor(session, gen);
     const { iv, ciphertext } = await seal(key, roomKey, ad);
 
     this.sendData(
@@ -281,7 +347,7 @@ export class GroupE2EE {
     const fp = await fingerprint(roomKey);
     this.convergence.setOwnFingerprint(fp);
     this.onFingerprintChanged(fp, gen);
-    this.sendData(textEncode({ type: "fingerprint", from: this.myDeviceIdentity, generation: gen, fingerprint: fp }));
+    await this._broadcastFingerprintProof(gen, roomKey);
 
     if (failures.length > 0) {
       // Not re-thrown -- the rotation as a whole succeeded (everyone
@@ -289,6 +355,18 @@ export class GroupE2EE {
       // it without it reading as "the call is broken", which it isn't.
       this.onPartialRotationFailure(failures.map((f) => f.peerIdentity));
     }
+  }
+
+  /** §6.1's check as proof of possession, not a claim. The fingerprint
+   * is visible to everyone on the data channel, so a participant on the
+   * wrong key could just echo it back and suppress the mismatch. A MAC
+   * keyed by the room key can't be. Changes what goes on the wire, not
+   * what a human compares. */
+  async _broadcastFingerprintProof(generation, roomKey) {
+    const proof = await fingerprintProof(roomKey, generation, this.myDeviceIdentity);
+    this.sendData(
+      textEncode({ type: "fingerprint", from: this.myDeviceIdentity, generation, proof })
+    );
   }
 
   /** Asks `peerIdentity` to drop whatever stale session it has for us and
@@ -349,7 +427,7 @@ export class GroupE2EE {
         return;
       }
 
-      const ad = new TextEncoder().encode(`generation:${msg.generation}`);
+      const ad = this._adFor(session, msg.generation);
       let roomKey;
       try {
         roomKey = new Uint8Array(await open(key, base64Decode(msg.iv), base64Decode(msg.ciphertext), ad));
@@ -360,6 +438,7 @@ export class GroupE2EE {
 
       this._clearPendingSessionReset(fromIdentity);
       this.generation = msg.generation;
+      this.currentRoomKey = roomKey;
       const otherPeers = this.lastParticipants
         ? this.lastParticipants.map((p) => p.identity).filter((id) => id !== this.myDeviceIdentity)
         : [fromIdentity];
@@ -379,7 +458,7 @@ export class GroupE2EE {
       }
       this.convergence.setOwnFingerprint(fp);
       this.onFingerprintChanged(fp, msg.generation);
-      this.sendData(textEncode({ type: "fingerprint", from: this.myDeviceIdentity, generation: msg.generation, fingerprint: fp }));
+      await this._broadcastFingerprintProof(msg.generation, roomKey);
       return;
     }
 
@@ -394,6 +473,11 @@ export class GroupE2EE {
       // actually holding a room key to redeliver -- if we're not the
       // rotator (or haven't rotated yet), there's nothing to resend and
       // the requester's own timeout will surface a rejoin prompt.
+      const now = Date.now();
+      const lastHonored = this._lastHonoredSessionReset.get(fromIdentity);
+      if (lastHonored !== undefined && now - lastHonored < SESSION_RESET_COOLDOWN_MS) return;
+      this._lastHonoredSessionReset.set(fromIdentity, now);
+
       this.sessions.delete(fromIdentity);
       if (this.currentRoomKey !== null) {
         await this._sealAndSendRoomKey(fromIdentity, this.currentRoomKey, this.generation);
@@ -403,7 +487,18 @@ export class GroupE2EE {
 
     if (msg.type === "fingerprint") {
       if (!this.convergence || this.convergence.generation !== msg.generation) return;
-      this.convergence.recordPeerFingerprint(fromIdentity, msg.fingerprint);
+
+      // A peer that can't produce the MAC is recorded as disagreeing,
+      // whatever it claims about itself.
+      let agrees = false;
+      if (this.currentRoomKey !== null && typeof msg.proof === "string") {
+        const expected = await fingerprintProof(this.currentRoomKey, msg.generation, fromIdentity);
+        agrees = expected === msg.proof;
+      }
+      this.convergence.recordPeerFingerprint(
+        fromIdentity,
+        agrees ? this.convergence.ownFingerprint : FINGERPRINT_DISAGREES
+      );
       const decision = this.convergence.decide();
 
       if (decision.action === "prompt-rejoin") {

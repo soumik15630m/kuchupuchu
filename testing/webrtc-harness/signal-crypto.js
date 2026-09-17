@@ -252,6 +252,26 @@ export async function generateMoreOneTimePrekeys(identity, count) {
   return buildPublishPayload(identity, { oneTimePrekeyIds: newIds });
 }
 
+/** Verifies that `identityDhKey` ({public_key, signature}) is genuinely
+ * bound to `identityKeyB64` by that identity's own Ed25519 signature.
+ *
+ * Split out of verifyBundle so it can also be used on its own, against
+ * the identity material the server holds for a device, when checking an
+ * inbound X3DH initial message (see group-e2ee.js's
+ * _verifyClaimedIdentity). That check needs exactly this binding and
+ * nothing else from a bundle -- and must not consume a one-time prekey
+ * to get it. */
+export async function verifyIdentityDhKey(identityKeyB64, identityDhKey) {
+  const identityVerifyKey = await importEd25519PublicKey(base64Decode(identityKeyB64));
+  const ok = await crypto.subtle.verify(
+    "Ed25519",
+    identityVerifyKey,
+    base64Decode(identityDhKey.signature),
+    base64Decode(identityDhKey.public_key)
+  );
+  if (!ok) throw new Error("identity_dh_key signature does not verify against identity_key");
+}
+
 /** Verifies a fetched bundle's signatures before using it for anything --
  * the server already checks these on upload (app/prekeys.py), but a
  * client trusting the network to have done its own validation for it is
@@ -260,14 +280,7 @@ export async function verifyBundle(bundle) {
   const identityKeyRaw = base64Decode(bundle.identity_key);
   const identityVerifyKey = await importEd25519PublicKey(identityKeyRaw);
 
-  const dhIdentityRaw = base64Decode(bundle.identity_dh_key.public_key);
-  const dhIdentitySigOk = await crypto.subtle.verify(
-    "Ed25519",
-    identityVerifyKey,
-    base64Decode(bundle.identity_dh_key.signature),
-    dhIdentityRaw
-  );
-  if (!dhIdentitySigOk) throw new Error("bundle identity_dh_key signature does not verify");
+  await verifyIdentityDhKey(bundle.identity_key, bundle.identity_dh_key);
 
   const signedPrekeyRaw = base64Decode(bundle.signed_prekey.public_key);
   const spkSigOk = await crypto.subtle.verify(

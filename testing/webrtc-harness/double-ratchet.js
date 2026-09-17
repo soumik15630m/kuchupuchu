@@ -127,6 +127,29 @@ export async function fingerprint(keyBytes) {
   return toHex(digest).slice(0, 4);
 }
 
+/** Proof that the holder actually has `roomKey`, bound to one generation
+ * and one sender identity.
+ *
+ * This is what goes on the wire for §6.1's consistency check, instead of
+ * the fingerprint itself. The fingerprint is a 4-hex-character value
+ * every participant can read off the data channel, so broadcasting it
+ * proves nothing -- a participant on the wrong key can echo the value
+ * everyone else is sending and defeat the check. A MAC under the room
+ * key can't be produced without the key, and binding the sender identity
+ * in stops one participant replaying another's proof as its own.
+ *
+ * Truncated to 16 bytes: this authenticates a value that is only
+ * meaningful for the lifetime of a single generation, against an
+ * attacker who is already a room participant. 128 bits is far past what
+ * that needs. */
+export async function fingerprintProof(roomKey, generation, senderIdentity) {
+  const message = new TextEncoder().encode(
+    `kuchupuchu-fp-proof-v1|${generation}|${senderIdentity}`
+  );
+  const mac = await hmacSha256(roomKey, message);
+  return toHex(mac).slice(0, 32);
+}
+
 const GCM_IV_BYTES = 12;
 
 /** AES-256-GCM seal/open for the one thing this module's chain keys are

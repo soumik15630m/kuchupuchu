@@ -1,19 +1,14 @@
 // Run with: node --test test/*.test.mjs
 //
-// group-e2ee.js's own header comment says it's "not unit tested here"
-// because it needs a real LiveKit Room. That's true for the actual
-// wiring in app.js -- but GroupE2EE's dependencies (sendData,
-// fetchBundle, keyProvider) are all injected, which means the
-// rotation/recovery *logic* itself is fully testable without LiveKit or
-// a browser. This file does that: wires multiple GroupE2EE instances
-// together over a fake in-memory "data channel" and a fake prekey
-// server, and drives real multi-device scenarios -- including the
-// lone-reconnect recovery path -- end to end.
+// GroupE2EE's dependencies are all injected, so the rotation and
+// recovery logic is testable without LiveKit or a browser: multiple
+// instances wired together over a fake data channel and prekey server.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { GroupE2EE, DATA_TOPIC } from "../group-e2ee.js";
 import { generateIdentity, buildPublishPayload } from "../signal-crypto.js";
+import { fingerprintProof } from "../double-ratchet.js";
 
 /** A fake room: routes sendData calls between registered devices the
  * same way LiveKit's data channel would (targeted or broadcast), and
@@ -25,6 +20,7 @@ class FakeRoom {
     this.keyProviders = new Map(); // identity -> FakeKeyProvider
     this.fetchFailuresRemaining = new Map(); // identity -> count of times to fail before succeeding
     this.permanentlyUnreachable = new Set(); // identities whose bundle fetch always fails
+    this.identityChanges = []; // onIdentityChanged firings, for the persistence test
   }
 
   makeSendData(identity) {
@@ -33,9 +29,8 @@ class FakeRoom {
       for (const targetId of recipients) {
         const target = this.devices.get(targetId);
         if (!target) continue;
-        // Real LiveKit delivery is async (network round trip); queue as
-        // a microtask so tests can't accidentally depend on synchronous
-        // delivery order that a real network would never guarantee.
+        // Real delivery is a network round trip, so queue as a microtask
+        // -- no test should depend on synchronous delivery order.
         Promise.resolve().then(() => target.handleDataMessage(payloadBytes, identity));
       }
     };
@@ -53,6 +48,17 @@ class FakeRoom {
     const bundle = this.publishedBundles.get(deviceId);
     if (!bundle) throw new Error(`no bundle published for ${deviceId}`);
     return bundle;
+  }
+
+  /** The non-consuming identity lookup (GET /prekeys/{email}/{id}/identity).
+   * Deliberately NOT gated on fetchFailuresRemaining/permanentlyUnreachable:
+   * those model a *bundle* that hasn't landed yet, and the identity
+   * endpoint is a separate, one-time-prekey-free read. It still 404s for
+   * a device that has published nothing at all. */
+  async fetchIdentity(_email, deviceId) {
+    const bundle = this.publishedBundles.get(deviceId);
+    if (!bundle) throw new Error(`identity fetch failed for ${deviceId}: 404`);
+    return { identity_key: bundle.identity_key, identity_dh_key: bundle.identity_dh_key };
   }
 
   emailForIdentity(identity) {
@@ -76,13 +82,14 @@ class FakeRoom {
       keyProvider,
       sendData: this.makeSendData(identity),
       fetchBundle: (email, deviceId) => this.fetchBundle(email, deviceId),
+      fetchIdentity: (email, deviceId) => this.fetchIdentity(email, deviceId),
       emailForIdentity: (id) => this.emailForIdentity(id),
+      onIdentityChanged: (identity) => { this.identityChanges.push({ identity: identity, at: Date.now() }); },
       onFingerprintChanged: onFingerprintChanged ?? (() => {}),
       onRejoinNeeded: onRejoinNeeded ?? (() => {}),
       onPartialRotationFailure: onPartialRotationFailure ?? (() => {}),
-      // Real delays are 400/900/1800ms -- tests use near-zero delays so
-      // they run fast while still exercising the actual retry loop
-      // (same code path, same attempt count, just not waiting around).
+      // Real delays are 400/900/1800ms; near-zero here exercises the same
+      // retry loop without the waiting.
       bundleFetchRetryDelaysMs: [1, 1, 1],
     });
 
@@ -127,9 +134,8 @@ test("two devices converge on the same room key after a real rotation", async ()
   await room.addOrReconnectDevice("dev-a", { onFingerprintChanged: (fp) => (fingerprints.a = fp) });
   await room.addOrReconnectDevice("dev-b", { onFingerprintChanged: (fp) => (fingerprints.b = fp) });
 
-  // "dev-a" is the earliest joiner in this fake room's joinedAtMs=0-for-
-  // everyone setup, tie-broken by identity string -- "dev-a" < "dev-b",
-  // so dev-a is deterministically the rotator here.
+  // joinedAtMs is 0 for everyone here, so the tie-break is the identity
+  // string: "dev-a" < "dev-b", deterministically.
   await room.devices.get("dev-a").onMembershipChanged(room.currentParticipants());
   await room.devices.get("dev-b").onMembershipChanged(room.currentParticipants());
   await waitForMicrotasks();
@@ -155,12 +161,10 @@ test("a lone reconnect recovers via session-reset instead of getting permanently
   await waitForMicrotasks();
   assert.equal(fingerprints.a, fingerprints.b, "sanity check: converged before the reconnect");
 
-  // dev-b "reconnects": a brand new GroupE2EE instance, same device
-  // identity, same crypto identity (simulating app.js's cachedCryptoIdentity
-  // fix), but its `sessions` Map starts empty -- dev-a's does NOT, since
-  // dev-a never reconnected. This is exactly the scenario that used to
-  // get permanently stuck: dev-a still thinks it has a session with
-  // dev-b and won't send a fresh x3dhInit.
+  // dev-b "reconnects": new instance, same device and crypto identity,
+  // but an empty `sessions` Map -- dev-a's is NOT empty, since dev-a
+  // never reconnected. This used to get permanently stuck: dev-a still
+  // thinks it has a session and won't send a fresh x3dhInit.
   const oldBSessionIdentity = room.devices.get("dev-b").identity;
   fingerprints.b = null;
   await room.addOrReconnectDevice("dev-b", {
@@ -169,15 +173,10 @@ test("a lone reconnect recovers via session-reset instead of getting permanently
     onRejoinNeeded: () => rejoinCalls.b++,
   });
 
-  // dev-a doesn't reconnect and doesn't see a membership change (same
-  // participant identities as before) -- so it never re-rotates on its
-  // own. Recovery has to happen entirely through the session-reset path
-  // triggered by dev-b's next incoming (undecryptable) room-key message.
-  // Simulate that by having dev-a resend to the room (a real client
-  // would do this on ParticipantConnected firing again, or dev-b could
-  // trigger it by sending anything -- what matters here is proving the
-  // recovery path itself works once a room-key message arrives that
-  // dev-b can't decrypt).
+  // dev-a neither reconnects nor sees a membership change, so it never
+  // re-rotates on its own. Recovery has to come entirely from the
+  // session-reset path that dev-b's next undecryptable room-key message
+  // triggers.
   await room.devices.get("dev-a")._sealAndSendRoomKey("dev-b", room.devices.get("dev-a").currentRoomKey, room.devices.get("dev-a").generation);
   await waitForMicrotasks(20);
 
@@ -204,11 +203,9 @@ test("three-device group: a non-rotator's convergence check waits for every peer
   assert.equal(fingerprints.b, fingerprints.c);
 
   // Regression check for the hardcoded expectedPeerCount=1 bug: a
-  // non-rotator's FingerprintConvergence must be sized to ALL other
-  // participants (2, in a 3-person room), not just 1. "dev-a" is the
-  // deterministic rotator (earliest joiner, tie-broken alphabetically,
-  // per electRotator) -- pick a genuine non-rotator explicitly rather
-  // than assuming.
+  // non-rotator's convergence must be sized to ALL other participants
+  // (2, in a 3-person room). Pick a genuine non-rotator explicitly
+  // rather than assuming which one it is.
   const nonRotatorId = ["dev-b", "dev-c"].find((id) => id !== "dev-a");
   const nonRotator = room.devices.get(nonRotatorId);
   assert.equal(nonRotator.convergence.expectedPeerCount, 2);
@@ -221,10 +218,8 @@ test("a transient bundle-fetch race (peer hasn't published yet) recovers via ret
   await room.addOrReconnectDevice("dev-a", { onFingerprintChanged: (fp) => (fingerprints.a = fp) });
   await room.addOrReconnectDevice("dev-b", { onFingerprintChanged: (fp) => (fingerprints.b = fp) });
 
-  // Simulate exactly what happened in real testing: dev-a tries to
-  // fetch dev-b's bundle before dev-b's publish has "landed" -- the
-  // first two attempts 404, the third (and real retries after it)
-  // succeed once the publish has caught up.
+  // What happened in real testing: dev-a fetches dev-b's bundle before
+  // dev-b's publish has landed, so the first two attempts 404.
   room.fetchFailuresRemaining.set("dev-b", 2);
 
   await room.devices.get("dev-a").onMembershipChanged(room.currentParticipants());
@@ -233,6 +228,88 @@ test("a transient bundle-fetch race (peer hasn't published yet) recovers via ret
 
   assert.ok(fingerprints.a, "dev-a should have recovered and completed rotation despite the transient failure");
   assert.equal(fingerprints.a, fingerprints.b);
+});
+
+test("an x3dhInit carrying a victim's identity_key but an attacker's DH key is rejected", async () => {
+  // `identity_key` is public, so an attacker already in the room can copy
+  // the victim's verbatim while substituting their own identity_dh_key.
+  // The safety number hashes the *claimed* identity_key, so the value
+  // shown to the human still matches. Only binding the two keys catches it.
+  const room = new FakeRoom();
+  await room.addOrReconnectDevice("dev-a");
+  await room.addOrReconnectDevice("dev-victim");
+  const attackerIdentity = await generateIdentity({ oneTimePrekeyCount: 1 });
+  const attackerPayload = await buildPublishPayload(attackerIdentity);
+
+  const victimBundle = room.publishedBundles.get("dev-victim");
+  const target = room.devices.get("dev-a");
+
+  // Attacker speaks as "dev-victim" (LiveKit reports the real sender
+  // identity, but the attacker is a room member speaking under some
+  // identity -- what they forge is the *contents*).
+  const forged = {
+    identity_key: victimBundle.identity_key, // copied verbatim from the victim
+    identity_dh_key: attackerPayload.identity_dh_key.public_key, // the attacker's own
+    ephemeral_key: attackerPayload.signed_prekey.public_key,
+    used_signed_prekey_id: 1,
+    used_one_time_prekey_id: null,
+  };
+
+  await assert.rejects(
+    () => target._handleIncomingInitialMessage("dev-victim", forged),
+    /identity_dh_key that does not match/
+  );
+  assert.equal(target.sessions.has("dev-victim"), false, "no session should have been established");
+});
+
+test("a room-key blob is bound to the identity pair, not just the generation", async () => {
+  // Regression test for associatedData being computed, returned, and
+  // then silently dropped: with only `generation:N` bound in, a blob
+  // sealed for one pair of identities carries nothing tying it to them.
+  const room = new FakeRoom();
+  await room.addOrReconnectDevice("dev-a");
+  await room.addOrReconnectDevice("dev-b");
+  await room.devices.get("dev-a").onMembershipChanged(room.currentParticipants());
+  await room.devices.get("dev-b").onMembershipChanged(room.currentParticipants());
+  await waitForMicrotasks();
+
+  const a = room.devices.get("dev-a");
+  const session = a.sessions.get("dev-b");
+  const ad = a._adFor(session, 7);
+  const adText = new TextDecoder().decode(ad);
+
+  assert.ok(adText.endsWith("|generation:7"), "generation must still be bound");
+  assert.ok(
+    ad.byteLength > "|generation:7".length,
+    "associated data must carry the X3DH identity binding (IK_A || IK_B), not just the generation"
+  );
+  // Different generation => different AD, so a blob can't be replayed
+  // at another point in the same session either.
+  assert.notDeepEqual(ad, a._adFor(session, 8));
+});
+
+test("a fingerprint proof cannot be forged by a peer that doesn't hold the room key", async () => {
+  const room = new FakeRoom();
+  await room.addOrReconnectDevice("dev-a");
+  await room.addOrReconnectDevice("dev-b");
+  await room.devices.get("dev-a").onMembershipChanged(room.currentParticipants());
+  await room.devices.get("dev-b").onMembershipChanged(room.currentParticipants());
+  await waitForMicrotasks();
+
+  const a = room.devices.get("dev-a");
+  const gen = a.generation;
+
+  // A participant on the wrong key echoing back a proof it copied off
+  // the wire from someone else must not count as agreement: the sender
+  // identity is bound into the MAC.
+  const realProofFromB = await fingerprintProof(a.currentRoomKey, gen, "dev-b");
+  const asIfFromC = await fingerprintProof(a.currentRoomKey, gen, "dev-c");
+  assert.notEqual(realProofFromB, asIfFromC, "proofs must be bound to the sender identity");
+
+  // And a proof under a different room key doesn't verify at all.
+  const wrongKey = crypto.getRandomValues(new Uint8Array(32));
+  const forged = await fingerprintProof(wrongKey, gen, "dev-b");
+  assert.notEqual(forged, realProofFromB);
 });
 
 test("a peer that never comes back doesn't block the room key from reaching everyone else", async () => {
@@ -258,4 +335,33 @@ test("a peer that never comes back doesn't block the room key from reaching ever
   assert.equal(fingerprints.a, fingerprints.b, "dev-b, who IS reachable, should still get the room key");
   assert.equal(fingerprints.c, null, "dev-c never received a working room-key message, as expected");
   assert.deepEqual(partialFailures, [["dev-c"]], "the rotator should be told which peer(s) it couldn't reach");
+});
+
+
+test("consuming a one-time prekey notifies the caller so it can re-persist", async () => {
+  // A device's identity must survive a reload (identity-store.js: the
+  // server refuses to replace an identity key, so losing it locks that
+  // device out of E2EE permanently). But persisting only at creation is
+  // not enough: respondToSession DELETES the one-time prekey it consumes,
+  // and a reload that restored the pre-consumption copy would hand that
+  // spent key back out -- defeating exactly the replay protection the
+  // one-time prekey exists for.
+  const room = new FakeRoom();
+  await room.addOrReconnectDevice("dev-a");
+  await room.addOrReconnectDevice("dev-b");
+
+  const before = room.identityChanges.length;
+  await room.devices.get("dev-a").onMembershipChanged(room.currentParticipants());
+  await room.devices.get("dev-b").onMembershipChanged(room.currentParticipants());
+  await waitForMicrotasks(20);
+
+  assert.ok(
+    room.identityChanges.length > before,
+    "responding to an x3dhInit consumes a one-time prekey and must report the mutation"
+  );
+
+  // And the reported identity really has the key removed.
+  const responder = room.devices.get("dev-b");
+  const reported = room.identityChanges.at(-1).identity;
+  assert.equal(reported, responder.identity, "callback should hand back the live identity object");
 });

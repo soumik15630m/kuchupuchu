@@ -39,12 +39,55 @@ test("FingerprintConvergence waits until every expected peer has checked in", ()
   assert.deepEqual(fc.decide(), { action: "converged" });
 });
 
-test("FingerprintConvergence treats an exact 50% mismatch as converged (threshold is >50%)", () => {
+test("FingerprintConvergence does NOT treat an exact 50% mismatch as converged", () => {
+  // §6.1's ">50% mismatch" wording, read literally, reports success here:
+  // in a 4-person call two peers on a different room key is exactly 0.5,
+  // and the call would carry on with half the room unable to decrypt the
+  // other half. Any disagreement at all is worth one re-rotation.
   const fc = new FingerprintConvergence(0, 2);
   fc.setOwnFingerprint("aaaa");
   fc.recordPeerFingerprint("bob", "aaaa");
-  fc.recordPeerFingerprint("carol", "bbbb"); // 1 of 2 = 50%, not > 50%
+  fc.recordPeerFingerprint("carol", "bbbb"); // 1 of 2 = 50%
+  assert.deepEqual(fc.decide(), { action: "retry-rotation" });
+  assert.deepEqual(fc.decide(), { action: "prompt-rejoin" });
+});
+
+test("FingerprintConvergence still reports converged when everyone genuinely agrees", () => {
+  const fc = new FingerprintConvergence(0, 2);
+  fc.setOwnFingerprint("aaaa");
+  fc.recordPeerFingerprint("bob", "aaaa");
+  fc.recordPeerFingerprint("carol", "aaaa");
   assert.deepEqual(fc.decide(), { action: "converged" });
+});
+
+test("electRotator sorts an unknown joinedAtMs last, never first", () => {
+  // Substituting 0 for an unpopulated joinedAt (what app.js used to do)
+  // makes that participant look like the earliest joiner and win the
+  // election outright -- and two clients disagreeing about whose
+  // timestamp is known would each elect a different rotator.
+  assert.equal(
+    electRotator([
+      { identity: "dev-a", joinedAtMs: null },
+      { identity: "dev-b", joinedAtMs: 1000 },
+    ]),
+    "dev-b"
+  );
+  assert.equal(
+    electRotator([
+      { identity: "dev-a", joinedAtMs: undefined },
+      { identity: "dev-b", joinedAtMs: 5_000_000 },
+    ]),
+    "dev-b"
+  );
+  // All unknown -> the identity tie-break still gives every client the
+  // same deterministic answer.
+  assert.equal(
+    electRotator([
+      { identity: "dev-z", joinedAtMs: null },
+      { identity: "dev-a", joinedAtMs: null },
+    ]),
+    "dev-a"
+  );
 });
 
 test("FingerprintConvergence requests one retry on majority mismatch, then prompts rejoin", () => {
