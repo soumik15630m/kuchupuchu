@@ -1,23 +1,48 @@
 """Shared test fixtures for auth-service.
 
-Uses an in-memory SQLite DB (SQLITE_PATH=":memory:") so tests never touch
-/data/app.db, and don't need Docker or Redis running. Env vars are set
-before app.db is imported anywhere, since get_db() reads them lazily on
-first call but caches a single connection afterward -- resetting that
-cache between test modules is what `_reset_db` does.
+Uses a throwaway on-disk SQLite file per test so tests never touch
+/data/app.db, and don't need Docker or Redis running.
+
+Deliberately a temp FILE rather than ":memory:". app.db hands out one
+connection per thread (see its module docstring on why a single shared
+connection made `BEGIN IMMEDIATE` meaningless), and an ":memory:"
+database belongs to exactly one connection -- so the moment a test hit an
+endpoint, FastAPI's threadpool worker would open a *second*, empty
+in-memory DB with no schema in it. A file is also what production
+actually runs against, so this exercises the real locking behaviour
+rather than a mode the service never uses.
 """
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("SQLITE_PATH", ":memory:")
+# Never read a .env during tests. See app/main.py: a suite whose results
+# depend on whether a .env happens to exist on disk is not a suite.
+os.environ["KUCHUPUCHU_SKIP_DOTENV"] = "1"
+
+os.environ.setdefault("SQLITE_PATH", str(Path(tempfile.mkdtemp()) / "test-app.db"))
 os.environ.setdefault("LIVEKIT_API_KEY", "test-key")
-os.environ.setdefault("LIVEKIT_API_SECRET", "test-secret-not-for-prod")
 os.environ.setdefault("LIVEKIT_URL", "wss://test.invalid")
-os.environ.setdefault("JWT_SECRET", "test-jwt-secret-not-for-prod")
 os.environ.setdefault("WEB_CLIENT_ORIGIN", "https://app.test.invalid")
+# Required by mint_turn_credentials. Previously set only by
+# test_media_credentials' autouse fixture, and monkeypatch.setenv DELETES
+# a variable on teardown when it didn't exist before -- so with
+# pytest-randomly that module intermittently broke whoever ran next.
+os.environ.setdefault("TURN_HOSTNAME", "turn.test.invalid")
+os.environ.setdefault("TURN_REALM", "turn.test.invalid")
+# No default any more -- mailer.validate_transport refuses to start
+# without an explicit choice. See finding #3 in the audit.
+os.environ.setdefault("OTP_TRANSPORT", "console")
+
+# Three distinct values, each >= MIN_SECRET_LENGTH, so the suite runs
+# against the same validate_secrets() gate production does rather than
+# around it.
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-not-for-prod-0123456789abcdef")
+os.environ.setdefault("LIVEKIT_API_SECRET", "test-livekit-secret-not-for-prod-0123456789abcdef")
+os.environ.setdefault("TURN_SHARED_SECRET", "test-turn-secret-not-for-prod-0123456789abcdef")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -29,20 +54,28 @@ from app.session_tokens import sign_access_token
 
 
 @pytest.fixture()
-def fresh_db():
-    """Forces a brand new in-memory DB + fresh schema for each test --
-    important because sqlite3's ':memory:' DB is dropped whenever the
-    connection closes, but our own module-level cache in app.db would
-    otherwise hand back a stale/closed connection across tests. Also
-    resets the quality router's rate-limiter state, which is separate
-    process-global state the DB reset doesn't touch."""
-    db_module._db = None
+def fresh_db(tmp_path, monkeypatch):
+    """A brand new DB file + fresh schema for each test.
+
+    Invalidates every connection app.db has handed out (across all
+    threads, including FastAPI threadpool workers that may outlive a
+    single test) before pointing SQLITE_PATH at a new file, so nothing
+    carries a handle to the previous test's database. Also resets the
+    rate-limiter state, which is process-global and otherwise leaks
+    across cases.
+    """
+    # Order matters: SQLITE_PATH must change BEFORE connections are
+    # invalidated. Reversed, a live thread calling get_db() in the window
+    # between opens a fresh connection -- current generation, so it looks
+    # right -- against the previous test's database file.
+    monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "test-app.db"))
+    db_module.reset_connections()
     run_migrations()
     from app.routers.quality import _reset_rate_limiter_state
 
     _reset_rate_limiter_state()
     yield db_module.get_db()
-    db_module._db = None
+    db_module.reset_connections()
 
 
 @pytest.fixture()

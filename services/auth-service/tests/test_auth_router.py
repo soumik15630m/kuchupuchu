@@ -43,7 +43,18 @@ def test_otp_request_for_unknown_email_also_returns_sent(client, fresh_db):
     assert res.json() == {"status": "sent"}
 
 
-def test_otp_request_rate_limited_after_max_per_hour(client, fresh_db):
+def test_otp_request_over_the_per_hour_limit_is_indistinguishable_from_success(client, fresh_db):
+    """Being rate-limited must not be observable to an unauthenticated
+    caller, because only allowlisted addresses ever reach the per-email
+    limiter -- request_otp raises NotAllowlistedError first. A 429 here
+    therefore confirmed "this address IS on the allowlist", handing back
+    exactly the enumeration answer the deliberately-vague 202 for
+    not-allowlisted addresses exists to withhold.
+
+    The limit itself still applies; it just isn't announced. See
+    test_otp_request_over_limit_stops_storing_codes for the enforcement
+    half of this.
+    """
     _allowlist("a@example.com")
     from app.otp import MAX_REQUESTS_PER_HOUR
 
@@ -51,7 +62,42 @@ def test_otp_request_rate_limited_after_max_per_hour(client, fresh_db):
         assert client.post("/otp/request", json={"email": "a@example.com"}).status_code == 202
 
     res = client.post("/otp/request", json={"email": "a@example.com"})
-    assert res.status_code == 429
+    assert res.status_code == 202
+    assert res.json() == {"status": "sent"}
+
+    # ...and identical to what an address that isn't allowlisted at all gets.
+    unknown = client.post("/otp/request", json={"email": "nobody@example.com"})
+    assert unknown.status_code == res.status_code
+    assert unknown.json() == res.json()
+
+
+def test_otp_request_over_limit_stops_storing_codes(client, fresh_db):
+    """The flat 202 above hides the limit from the caller; this checks it
+    is still actually enforced underneath."""
+    _allowlist("a@example.com")
+    from app.otp import MAX_REQUESTS_PER_HOUR
+
+    for _ in range(MAX_REQUESTS_PER_HOUR + 3):
+        client.post("/otp/request", json={"email": "a@example.com"})
+
+    stored = fresh_db.execute(
+        "SELECT COUNT(*) AS n FROM otp_codes WHERE email = ?", ("a@example.com",)
+    ).fetchone()["n"]
+    assert stored == MAX_REQUESTS_PER_HOUR
+
+
+def test_otp_request_is_rate_limited_per_source_ip(client, fresh_db):
+    """The per-email limit can't see an attacker walking a list of
+    addresses, and burning one known member's per-email quota from
+    anywhere on the internet is itself a lockout attack."""
+    from app.routers.auth import _otp_request_ip_limiter
+
+    for i in range(_otp_request_ip_limiter.max_events + 5):
+        _allowlist(f"user{i}@example.com")
+        client.post("/otp/request", json={"email": f"user{i}@example.com"})
+
+    total = fresh_db.execute("SELECT COUNT(*) AS n FROM otp_codes").fetchone()["n"]
+    assert total == _otp_request_ip_limiter.max_events
 
 
 def test_full_login_flow_issues_access_and_refresh_tokens(client, fresh_db):

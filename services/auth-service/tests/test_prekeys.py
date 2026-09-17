@@ -323,3 +323,155 @@ def test_revoked_device_cannot_publish_or_fetch(client, fresh_db):
 
     res = client.get("/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 401
+
+
+def _publish_for(client, email: str, device_id: str, num_one_time: int = 5) -> str:
+    """Registers a device, publishes a full bundle for it, returns its token."""
+    token = access_token_for(email, device_id)
+    identity_sk, identity_pub = _new_identity_key()
+    res = client.post(
+        "/prekeys/me",
+        json=_publish_body(identity_sk, identity_pub, num_one_time=num_one_time),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200, res.text
+    return token
+
+
+def test_revoked_device_bundle_is_no_longer_served(client, fresh_db):
+    """§4 treats revocation as the thing that cuts a device off. Serving
+    its prekey bundle afterwards lets anyone still establish a fresh E2EE
+    session with it -- exactly the relationship revocation ends.
+
+    404, not 403: distinguishing "revoked" from "never existed" confirms
+    the device id was real.
+    """
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
+    _publish_for(client, "a@example.com", "dev-a")
+    caller = access_token_for("b@example.com", "dev-b")
+
+    ok = client.get("/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {caller}"})
+    assert ok.status_code == 200
+
+    fresh_db.execute("UPDATE devices SET status = 'revoked' WHERE id = 'dev-a'")
+    fresh_db.commit()
+
+    gone = client.get("/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {caller}"})
+    assert gone.status_code == 404
+
+
+def test_expired_device_bundle_is_no_longer_served(client, fresh_db):
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
+    _publish_for(client, "a@example.com", "dev-a")
+    caller = access_token_for("b@example.com", "dev-b")
+
+    fresh_db.execute("UPDATE devices SET status = 'expired' WHERE id = 'dev-a'")
+    fresh_db.commit()
+
+    res = client.get("/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {caller}"})
+    assert res.status_code == 404
+
+
+def test_bundle_fetches_are_rate_limited_so_the_prekey_pool_cannot_be_drained(client, fresh_db):
+    """Every successful bundle fetch permanently consumes a one-time
+    prekey. Unlimited, any active device drains a peer's whole pool with
+    ordinary requests, after which every session with that peer silently
+    falls back to the three-DH variant and loses the forward secrecy the
+    one-time prekey provided -- invisibly to both users."""
+    from app.routers.prekeys import _bundle_fetch_limiter
+
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
+    _publish_for(client, "a@example.com", "dev-a", num_one_time=50)
+    caller = access_token_for("b@example.com", "dev-b")
+
+    statuses = [
+        client.get(
+            "/prekeys/a@example.com/dev-a", headers={"Authorization": f"Bearer {caller}"}
+        ).status_code
+        for _ in range(_bundle_fetch_limiter.max_events + 5)
+    ]
+    assert statuses.count(200) == _bundle_fetch_limiter.max_events
+    assert statuses.count(429) == 5
+
+    remaining = fresh_db.execute(
+        "SELECT COUNT(*) AS n FROM one_time_prekeys WHERE device_id = 'dev-a' AND used_at IS NULL"
+    ).fetchone()["n"]
+    assert remaining == 50 - _bundle_fetch_limiter.max_events
+
+
+def test_identity_endpoint_does_not_consume_a_one_time_prekey(client, fresh_db):
+    """The identity lookup exists so a client can verify an inbound X3DH
+    initial message without that verification costing a one-time prekey
+    -- otherwise the defence becomes a way to drain the pool it protects."""
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
+    _publish_for(client, "a@example.com", "dev-a", num_one_time=5)
+    caller = access_token_for("b@example.com", "dev-b")
+
+    for _ in range(20):
+        res = client.get(
+            "/prekeys/a@example.com/dev-a/identity", headers={"Authorization": f"Bearer {caller}"}
+        )
+        assert res.status_code == 200
+
+    body = res.json()
+    assert set(body) == {"identity_key", "identity_dh_key"}
+    assert "one_time_prekey" not in body
+
+    remaining = fresh_db.execute(
+        "SELECT COUNT(*) AS n FROM one_time_prekeys WHERE device_id = 'dev-a' AND used_at IS NULL"
+    ).fetchone()["n"]
+    assert remaining == 5
+
+
+def test_identity_endpoint_enforces_the_same_target_checks(client, fresh_db):
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
+    _publish_for(client, "a@example.com", "dev-a")
+    caller = access_token_for("b@example.com", "dev-b")
+
+    assert client.get("/prekeys/a@example.com/dev-a/identity").status_code == 401
+    wrong_email = client.get(
+        "/prekeys/wrong@example.com/dev-a/identity", headers={"Authorization": f"Bearer {caller}"}
+    )
+    assert wrong_email.status_code == 404
+
+    fresh_db.execute("UPDATE devices SET status = 'revoked' WHERE id = 'dev-a'")
+    fresh_db.commit()
+    revoked = client.get(
+        "/prekeys/a@example.com/dev-a/identity", headers={"Authorization": f"Bearer {caller}"}
+    )
+    assert revoked.status_code == 404
+
+
+def test_a_rejected_one_time_prekey_batch_does_not_half_publish_the_bundle(client, fresh_db):
+    """Each upload used to commit independently, so a bundle whose
+    one-time prekeys were rejected left the identity key already
+    committed -- and the identity key is write-once, so retrying the same
+    publish then 409'd on a key the client had itself just written, with
+    no way forward except re-provisioning the device."""
+    register_device(fresh_db, "a@example.com", "dev-a")
+    token = access_token_for("a@example.com", "dev-a")
+    identity_sk, identity_pub = _new_identity_key()
+
+    body = _publish_body(identity_sk, identity_pub, num_one_time=0)
+    duplicate = _new_one_time_prekey(7)
+    body["one_time_prekeys"] = [duplicate, duplicate]  # same key_id twice
+
+    first = client.post("/prekeys/me", json=body, headers={"Authorization": f"Bearer {token}"})
+    assert first.status_code == 409
+
+    # Nothing should have landed, so an honest retry must now succeed.
+    assert fresh_db.execute(
+        "SELECT COUNT(*) AS n FROM identity_keys WHERE device_id = 'dev-a'"
+    ).fetchone()["n"] == 0
+
+    retry = client.post(
+        "/prekeys/me",
+        json=_publish_body(identity_sk, identity_pub, num_one_time=3),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert retry.status_code == 200, retry.text

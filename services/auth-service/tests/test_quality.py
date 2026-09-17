@@ -144,3 +144,54 @@ def test_dashboard_is_publicly_reachable_shell(client):
     res = client.get("/quality/dashboard")
     assert res.status_code == 200
     assert "text/html" in res.headers["content-type"]
+
+
+def test_recent_is_scoped_to_your_own_devices(client, fresh_db):
+    """Previously unscoped for every caller: any active device could read
+    every member's room names, device ids and call timings. §4 treats the
+    device as the identity boundary everywhere else."""
+    from tests.conftest import access_token_for, register_device
+
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
+
+    for device_id, email in (("dev-a", "a@example.com"), ("dev-b", "b@example.com")):
+        res = client.post(
+            "/quality/report",
+            json={"room_name": f"room-{device_id}", "device_id": device_id},
+            headers={"Authorization": f"Bearer {access_token_for(email, device_id)}"},
+        )
+        assert res.status_code == 200
+
+    seen = client.get(
+        "/quality/recent",
+        headers={"Authorization": f"Bearer {access_token_for('a@example.com', 'dev-a')}"},
+    ).json()["reports"]
+
+    assert {r["device_id"] for r in seen} == {"dev-a"}
+    assert all(r["room_name"] != "room-dev-b" for r in seen)
+
+
+def test_recent_shows_everything_to_an_admin(client, fresh_db):
+    """Diagnosing "is the Russia path working" is inherently a
+    cross-member question, and admin is already the privilege level for
+    cross-person operations (routers/devices.py)."""
+    from tests.conftest import access_token_for, register_device
+
+    register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "admin@example.com", "dev-admin")
+    fresh_db.execute("UPDATE allowlist SET is_admin = 1 WHERE email = 'admin@example.com'")
+    fresh_db.commit()
+
+    client.post(
+        "/quality/report",
+        json={"room_name": "room-a", "device_id": "dev-a"},
+        headers={"Authorization": f"Bearer {access_token_for('a@example.com', 'dev-a')}"},
+    )
+
+    seen = client.get(
+        "/quality/recent",
+        headers={"Authorization": f"Bearer {access_token_for('admin@example.com', 'dev-admin')}"},
+    ).json()["reports"]
+
+    assert "dev-a" in {r["device_id"] for r in seen}

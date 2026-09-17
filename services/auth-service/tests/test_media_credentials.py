@@ -19,7 +19,10 @@ def _decode_jwt_payload(token: str) -> dict:
 
 @pytest.fixture(autouse=True)
 def _turn_env(monkeypatch):
-    monkeypatch.setenv("TURN_SHARED_SECRET", "test-turn-secret-not-for-prod")
+    # Long enough to satisfy session_tokens.validate_secrets, which runs
+    # at app startup for any test in this module that uses the `client`
+    # fixture.
+    monkeypatch.setenv("TURN_SHARED_SECRET", "test-turn-secret-not-for-prod-0123456789abcdef")
     monkeypatch.setenv("TURN_HOSTNAME", "turn.test.invalid")
 
 
@@ -82,11 +85,12 @@ def test_room_token_endpoint_reflects_env_ttl(client, fresh_db, monkeypatch):
 
     monkeypatch.setenv("ROOM_TOKEN_TTL_MINUTES", "60")
     register_device(fresh_db, "a@example.com", "dev-a")
+    register_device(fresh_db, "b@example.com", "dev-b")
     token = access_token_for("a@example.com", "dev-a")
 
     res = client.post(
         "/room/token",
-        json={"roomName": "test-room"},
+        json={"participants": ["b@example.com"]},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert res.status_code == 200
