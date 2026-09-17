@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
+import { GifStickerPicker } from "@/components/chat/GifStickerPicker";
+import { downloadGif, type Gif } from "@/lib/messaging/gifs";
+import type { Sticker } from "@/lib/messaging/stickers";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { compressImage, makeThumbnail, pickVoiceMimeType, videoPoster } from "@/lib/messaging/media";
 import type { ChatTarget } from "@/lib/messaging/client";
@@ -27,6 +30,7 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [showGifs, setShowGifs] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordedMs, setRecordedMs] = useState(0);
 
@@ -121,6 +125,56 @@ export function Composer({
     }
   }
 
+  /** Both arrive as a blob and go out through the ordinary encrypted media
+   * pipeline, so the recipient fetches ciphertext from our own store rather
+   * than a third-party URL. */
+  async function sendBlobAs(
+    blob: Blob,
+    kind: "media" | "sticker",
+    extras: { name?: string; width?: number; height?: number } = {}
+  ) {
+    if (!client) return;
+    setBusy(true);
+    setError(null);
+    setShowGifs(false);
+    try {
+      const thumb = kind === "media" ? await makeThumbnail(blob) : undefined;
+      const { mediaId, key, iv } = await client.uploadMedia(audience, blob);
+      await client.send(target, {
+        kind,
+        body: "",
+        media: {
+          mediaId,
+          key,
+          iv,
+          mime: blob.type || "application/octet-stream",
+          byteSize: blob.size,
+          thumb,
+          ...extras,
+        },
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't send that.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendGif(gif: Gif) {
+    setBusy(true);
+    try {
+      const blob = await downloadGif(gif);
+      await sendBlobAs(blob, "media", {
+        name: gif.description,
+        width: gif.width,
+        height: gif.height,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't fetch that GIF.");
+      setBusy(false);
+    }
+  }
+
   async function startRecording() {
     if (!client || recording) return;
     setError(null);
@@ -198,6 +252,14 @@ export function Composer({
         </p>
       )}
 
+      {showGifs && (
+        <GifStickerPicker
+          onPickGif={(gif) => void sendGif(gif)}
+          onPickSticker={(sticker: Sticker) => void sendBlobAs(sticker.blob, "sticker")}
+          onClose={() => setShowGifs(false)}
+        />
+      )}
+
       {showEmoji && (
         <EmojiPicker
           onPick={(emoji) => {
@@ -223,7 +285,10 @@ export function Composer({
               type="button"
               className={styles.composerIcon}
               aria-label="Emoji"
-              onClick={() => setShowEmoji((v) => !v)}
+              onClick={() => {
+                setShowEmoji((v) => !v);
+                setShowGifs(false);
+              }}
             >
               <Icon name="emoji" size={21} />
             </button>
@@ -243,6 +308,18 @@ export function Composer({
                 void client?.sendTyping(target, e.target.value.length === 0);
               }}
             />
+            <button
+              type="button"
+              className={styles.composerIcon}
+              aria-label="GIFs and stickers"
+              onClick={() => {
+                setShowGifs((v) => !v);
+                setShowEmoji(false);
+              }}
+              disabled={busy}
+            >
+              <span className={styles.gifLabel}>GIF</span>
+            </button>
             <button
               type="button"
               className={styles.composerIcon}

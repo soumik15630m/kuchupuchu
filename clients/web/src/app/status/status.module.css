@@ -1,0 +1,270 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 11px 14px;
+  text-align: left;
+  color: inherit;
+}
+
+.row:hover {
+  background: var(--bg-hover);
+}
+
+.ring {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  /* Conic ring segmented per post, the way a story tray reads. */
+  padding: 3px;
+  background: var(--border-strong);
+}
+
+.ring[data-unseen="true"] {
+  background: var(--accent);
+}
+
+.ringInner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: calc(16px * var(--font-scale));
+  font-weight: 600;
+  border: 2px solid var(--bg);
+  overflow: hidden;
+}
+
+.ringInner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.rowBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.rowName {
+  font-size: calc(16px * var(--font-scale));
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowMeta {
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--ink-muted);
+}
+
+.sectionLabel {
+  padding: 12px 14px 6px;
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 600;
+  color: var(--ink-muted);
+  background: var(--bg-sunken);
+}
+
+.composeRow {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.composeButton {
+  flex: 1;
+  padding: 11px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  font-size: calc(14px * var(--font-scale));
+}
+
+.composeSecondary {
+  background: var(--bg-raised);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+/* Viewer */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+}
+
+.progress {
+  display: flex;
+  gap: 4px;
+  padding: calc(8px + env(safe-area-inset-top)) 10px 6px;
+}
+
+.progressBar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.3);
+  overflow: hidden;
+}
+
+.progressFill {
+  display: block;
+  height: 100%;
+  background: #fff;
+  width: 0;
+}
+
+.progressFill[data-state="done"] {
+  width: 100%;
+}
+
+.progressFill[data-state="active"] {
+  animation: fill 6s linear forwards;
+}
+
+@keyframes fill {
+  to {
+    width: 100%;
+  }
+}
+
+.viewerHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 14px 10px;
+  color: #fff;
+}
+
+.viewerWho {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(15px * var(--font-scale));
+  font-weight: 600;
+}
+
+.viewerWhen {
+  display: block;
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.viewerClose {
+  color: #fff;
+  padding: 6px;
+}
+
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  position: relative;
+  padding: 10px;
+}
+
+.stageMedia {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.textCard {
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 3 / 4;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  border-radius: 12px;
+  text-align: center;
+  color: #fff;
+  font-size: calc(22px * var(--font-scale));
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.caption {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  color: #fff;
+  text-align: center;
+  font-size: calc(14px * var(--font-scale));
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.tapZones {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.tapZone {
+  flex: 1;
+  background: transparent;
+}
+
+.viewerFooter {
+  padding: 10px 16px calc(14px + env(safe-area-inset-bottom));
+  color: rgba(255, 255, 255, 0.8);
+  font-size: calc(12.5px * var(--font-scale));
+  text-align: center;
+  position: relative;
+  z-index: 1;
+}
+
+/* Composer */
+.composeSheet {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+.textArea {
+  width: 100%;
+  min-height: 120px;
+  padding: 14px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  resize: vertical;
+  font-size: max(16px, calc(15px * var(--font-scale)));
+}
+
+.backgrounds {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.background {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+
+.background[aria-checked="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--bg);
+}

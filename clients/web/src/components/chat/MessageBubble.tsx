@@ -150,7 +150,9 @@ export function MessageBubble({
   return (
     <div className={styles.bubbleRow} data-outgoing={message.outgoing ? "true" : undefined}>
       <div
-        className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in}`}
+        className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in} ${
+          message.kind === "sticker" ? styles.sticker : ""
+        }`}
         data-kind={message.kind}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -166,7 +168,9 @@ export function MessageBubble({
           </span>
         )}
 
-        {message.kind === "media" && <MediaAttachment message={message} />}
+        {(message.kind === "media" || message.kind === "sticker") && (
+          <MediaAttachment message={message} />
+        )}
         {message.kind === "voice" && <VoiceNote message={message} />}
         {message.body && <span className={styles.body}>{message.body}</span>}
 
