@@ -34,11 +34,18 @@ export interface Tokens {
   refreshToken: string;
 }
 
+export interface TurnCredentials {
+  username: string;
+  password: string;
+  ttl: number;
+  uris: string[];
+}
+
 export interface RoomGrant {
   roomName: string;
   roomToken: string;
   livekitUrl: string;
-  turnCredentials: { urls: string[]; username: string; credential: string };
+  turnCredentials: TurnCredentials;
 }
 
 /** A device id is minted once and kept. Changing it strands the identity key
