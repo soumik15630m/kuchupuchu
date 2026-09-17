@@ -17,6 +17,7 @@ function preview(message: StoredMessage | null): string {
   if (!message) return "No messages yet";
   const prefix = message.outgoing ? "You: " : "";
   if (message.kind === "voice") return `${prefix}🎤 Voice note`;
+  if (message.kind === "sticker") return `${prefix}🏷️ Sticker`;
   if (message.kind === "media") return `${prefix}📎 Attachment`;
   return prefix + message.body;
 }

@@ -29,6 +29,7 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 
 export function preview(message: StoredMessage): string {
   if (message.kind === "voice") return "🎤 Voice note";
+  if (message.kind === "sticker") return "🏷️ Sticker";
   if (message.kind === "media") return "📎 Attachment";
   return message.body;
 }
