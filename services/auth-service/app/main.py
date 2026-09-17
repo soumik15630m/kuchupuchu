@@ -43,6 +43,7 @@ from app.routers import devices as devices_router
 from app.routers import prekeys as prekeys_router
 from app.routers import quality as quality_router
 from app.routers import room as room_router
+from app.routers import users as users_router
 
 logger = logging.getLogger(__name__)
 
@@ -193,3 +194,4 @@ app.include_router(room_router.router, prefix="/room")
 app.include_router(devices_router.router, prefix="/devices")
 app.include_router(quality_router.router, prefix="/quality")
 app.include_router(prekeys_router.router, prefix="/prekeys")
+app.include_router(users_router.router, prefix="/users")
