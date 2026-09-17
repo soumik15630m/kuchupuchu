@@ -1,4 +1,5 @@
 import type { Session, WireMessage } from "../api/client";
+import { toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
 import { decryptBlob } from "./media";
 import { SessionManager, decodeContent, encodeContent, type MessageEnvelope } from "./sessions";
 import {
@@ -9,22 +10,37 @@ import {
   type ReplyRef,
   type StoredMessage,
 } from "./store";
+import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 
 /** The plaintext inside an envelope. Everything user-visible lives here; the
  * server sees only the sealed form.
  *
- * `reaction` and `deletion` are control messages rather than bubbles: they
- * mutate a message that already exists instead of adding one. They travel the
- * same encrypted path as everything else, so the server cannot tell them
- * apart from an ordinary message. */
+ * `reaction`, `deletion` and `status-view` are control messages rather than
+ * bubbles: they mutate something that already exists instead of adding a
+ * message. They travel the same encrypted path as everything else, so the
+ * server cannot tell them apart from an ordinary message. */
 interface Content {
-  kind: "text" | "media" | "voice" | "reaction" | "deletion";
+  kind: "text" | "media" | "voice" | "sticker" | "status" | "reaction" | "deletion" | "status-view";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
-  /** Set on `reaction` and `deletion`: the client id of the message acted on. */
+  /** Set on the control kinds: the client id of the message acted on. */
   target?: string;
+  /** Present on every group message. A recipient learns the group from this
+   * rather than from a separate invite exchange. */
+  group?: GroupRef;
   sentAtMs: number;
+}
+
+/** Who a message is for. A group is fanned out pairwise to every member device
+ * rather than using sender keys: at this scale (§1, <=10 members) it reuses the
+ * per-device path that already exists and needs nothing from the server. */
+export type ChatTarget =
+  | { kind: "direct"; email: string }
+  | { kind: "group"; group: Group };
+
+export function targetChatId(target: ChatTarget): string {
+  return target.kind === "direct" ? target.email : target.group.id;
 }
 
 export interface TypingEvent {
@@ -37,6 +53,8 @@ export interface MessagingEvents {
   onStatus: (message: StoredMessage) => void;
   onTyping: (event: TypingEvent) => void;
   onConnectionChange: (online: boolean) => void;
+  /** A status post arrived, was published, or gained a viewer. */
+  onStatusPost: () => void;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -186,22 +204,45 @@ export class MessagingClient {
       return;
     }
 
-    if (content.kind === "reaction" || content.kind === "deletion") {
+    if (content.kind === "reaction" || content.kind === "deletion" || content.kind === "status-view") {
       await this.applyControl(content, wire.from_email);
       await this.acknowledge(wire.id);
       return;
     }
 
+    const sentAtMs = content.sentAtMs || Date.parse(wire.created_at) || Date.now();
+
+    if (content.kind === "status") {
+      await putStatus({
+        id: wire.client_msg_id,
+        authorEmail: wire.from_email,
+        outgoing: false,
+        body: content.body,
+        media: content.media,
+        background: content.replyTo?.body,
+        postedAtMs: sentAtMs,
+        viewed: false,
+        viewedBy: [],
+      });
+      this.events.onStatusPost();
+      await this.acknowledge(wire.id);
+      return;
+    }
+
+    // A group message names its group inside the ciphertext, so the chat it
+    // belongs to is known without the server ever learning the group exists.
+    if (content.group) upsertFromRef(content.group, wire.from_email);
+
     const stored: StoredMessage = {
       id: wire.client_msg_id,
-      chatId: wire.from_email,
+      chatId: content.group ? content.group.id : wire.from_email,
       fromEmail: wire.from_email,
       outgoing: false,
       kind: content.kind,
       body: content.body,
       media: content.media,
       replyTo: content.replyTo,
-      sentAtMs: content.sentAtMs || Date.parse(wire.created_at) || Date.now(),
+      sentAtMs,
       status: "delivered",
     };
     await putMessage(stored);
@@ -211,6 +252,13 @@ export class MessagingClient {
 
   private async applyControl(content: Content, fromEmail: string): Promise<void> {
     if (!content.target) return;
+
+    if (content.kind === "status-view") {
+      const updated = await recordViewer(content.target, fromEmail);
+      if (updated) this.events.onStatusPost();
+      return;
+    }
+
     const target = await getMessage(content.target);
     // The control can outrun its target across a reconnect, or refer to a
     // message this device cleared. Dropping it is correct either way.
@@ -264,101 +312,184 @@ export class MessagingClient {
     return devices;
   }
 
+  /** Everyone who should get a copy: the audience, plus this account's other
+   * devices so the conversation appears there too. This device is excluded —
+   * it already has the plaintext. */
+  private async fanoutTargets(
+    audience: string[],
+    plaintext: Uint8Array
+  ): Promise<{ email: string; device_id: string; envelope: string }[]> {
+    const recipients = new Set(audience.map((e) => e.toLowerCase()));
+    recipients.add(this.api.email.toLowerCase());
+
+    const targets: { email: string; device_id: string; envelope: string }[] = [];
+    for (const email of recipients) {
+      let devices: string[];
+      try {
+        devices = await this.devicesFor(email);
+      } catch {
+        // One unreachable member must not stop delivery to the rest of a
+        // group; they pick the message up from /pending once reachable.
+        continue;
+      }
+      for (const device of devices) {
+        if (email === this.api.email.toLowerCase() && device === this.deviceId) continue;
+        const envelope = await this.sessions.encrypt(email, device, plaintext);
+        targets.push({ email, device_id: device, envelope: JSON.stringify(envelope) });
+      }
+    }
+    return targets;
+  }
+
   async send(
-    peerEmail: string,
+    target: ChatTarget,
     content: Omit<Content, "sentAtMs"> & { sentAtMs?: number }
   ): Promise<StoredMessage> {
     const clientMsgId = crypto.randomUUID();
     const sentAtMs = content.sentAtMs ?? Date.now();
-    const isControl = content.kind === "reaction" || content.kind === "deletion";
+    const isControl =
+      content.kind === "reaction" || content.kind === "deletion" || content.kind === "status-view";
+    const chatId = targetChatId(target);
+
+    const body: Content = {
+      ...content,
+      sentAtMs,
+      ...(target.kind === "group" ? { group: toRef(target.group) } : {}),
+    };
 
     const stored: StoredMessage = {
       id: clientMsgId,
-      chatId: peerEmail,
+      chatId,
       fromEmail: this.api.email,
       outgoing: true,
-      kind: isControl ? "text" : (content.kind as StoredMessage["kind"]),
+      kind: isControl || content.kind === "status" ? "text" : (content.kind as StoredMessage["kind"]),
       body: content.body,
       media: content.media,
       replyTo: content.replyTo,
       sentAtMs,
       status: "sending",
     };
-    // A control message has no bubble of its own; the local effect was
-    // already applied optimistically by the caller.
-    if (!isControl) {
+    // Control messages and status posts have no chat bubble; their local effect
+    // was already applied by the caller.
+    const makesBubble = !isControl && content.kind !== "status";
+    if (makesBubble) {
       await putMessage(stored);
       this.events.onMessage(stored);
     }
 
     try {
-      const plaintext = encodeContent({ ...content, sentAtMs });
-      const targets: { email: string; device_id: string; envelope: string }[] = [];
-
-      // A copy for every device of the recipient AND for this account's other
-      // devices, so the conversation shows up there too. This device is
-      // excluded -- it already has the plaintext.
-      const fanout: [string, string[]][] = [
-        [peerEmail, await this.devicesFor(peerEmail)],
-        [this.api.email, (await this.devicesFor(this.api.email)).filter((d) => d !== this.deviceId)],
-      ];
-
-      for (const [email, devices] of fanout) {
-        for (const device of devices) {
-          const envelope = await this.sessions.encrypt(email, device, plaintext);
-          targets.push({ email, device_id: device, envelope: JSON.stringify(envelope) });
-        }
-      }
+      const audience =
+        target.kind === "group" ? target.group.members : [target.email];
+      const targets = await this.fanoutTargets(audience, encodeContent(body));
 
       if (targets.length === 0) {
-        throw new Error(`${peerEmail} has no active devices to deliver to`);
+        throw new Error(
+          target.kind === "group"
+            ? `no active devices in ${target.group.name} to deliver to`
+            : `${target.email} has no active devices to deliver to`
+        );
       }
 
       await this.api.sendMessage({
         client_msg_id: clientMsgId,
-        // The server only understands these three; a control message rides as
+        // The server understands only text/media/voice; anything else rides as
         // text because its real kind is inside the ciphertext.
-        kind: isControl ? "text" : content.kind,
+        kind: content.kind === "media" || content.kind === "voice" ? content.kind : "text",
         recipients: targets,
       });
 
-      if (isControl) return stored;
+      if (!makesBubble) return stored;
       const sent = await advanceStatus(clientMsgId, "sent");
       if (sent) this.events.onStatus(sent);
       return sent ?? stored;
     } catch (err) {
-      if (isControl) throw err;
+      if (!makesBubble) throw err;
       const failed = await advanceStatus(clientMsgId, "failed");
       if (failed) this.events.onStatus(failed);
       throw err;
     }
   }
 
+  /** Posts a status to every allowlisted member passed in. It is an ordinary
+   * encrypted fan-out; nothing about it is visible to the server. */
+  async postStatus(
+    audience: string[],
+    content: { body: string; media?: MediaRef; background?: string }
+  ): Promise<void> {
+    const id = crypto.randomUUID();
+    const postedAtMs = Date.now();
+
+    await putStatus({
+      id,
+      authorEmail: this.api.email,
+      outgoing: true,
+      body: content.body,
+      media: content.media,
+      background: content.background,
+      postedAtMs,
+      viewed: true,
+      viewedBy: [],
+    });
+    this.events.onStatusPost();
+
+    const plaintext = encodeContent({
+      kind: "status",
+      body: content.body,
+      media: content.media,
+      // Reuses replyTo's slot for the card background rather than widening the
+      // envelope for one optional string.
+      replyTo: content.background
+        ? { id: "", body: content.background, fromEmail: "" }
+        : undefined,
+      sentAtMs: postedAtMs,
+    } satisfies Content);
+
+    const targets = await this.fanoutTargets(audience, plaintext);
+    if (targets.length === 0) return;
+    await this.api.sendMessage({ client_msg_id: id, kind: "text", recipients: targets });
+  }
+
+  /** Tells the author their status was seen. */
+  async markStatusViewed(post: StatusPost): Promise<void> {
+    const updated = await markViewed(post.id);
+    if (!updated) return;
+    this.events.onStatusPost();
+    if (post.outgoing) return;
+    try {
+      await this.send(
+        { kind: "direct", email: post.authorEmail },
+        { kind: "status-view", body: "", target: post.id }
+      );
+    } catch {
+      // A view receipt is not worth surfacing or retrying.
+    }
+  }
+
   /** Applies the reaction locally first so the tap feels immediate, then
    * mirrors it to the peer. */
-  async react(peerEmail: string, targetId: string, emoji: string): Promise<void> {
-    const target = await getMessage(targetId);
-    if (!target) return;
+  async react(chat: ChatTarget, targetId: string, emoji: string): Promise<void> {
+    const message = await getMessage(targetId);
+    if (!message) return;
 
-    const reactions = { ...(target.reactions ?? {}) };
+    const reactions = { ...(message.reactions ?? {}) };
     const mine = reactions[this.api.email];
     const next = mine === emoji ? "" : emoji;
     if (next) reactions[this.api.email] = next;
     else delete reactions[this.api.email];
 
-    const updated = { ...target, reactions };
+    const updated = { ...message, reactions };
     await putMessage(updated);
     this.events.onStatus(updated);
 
-    await this.send(peerEmail, { kind: "reaction", body: next, target: targetId });
+    await this.send(chat, { kind: "reaction", body: next, target: targetId });
   }
 
-  async deleteForEveryone(peerEmail: string, targetId: string): Promise<void> {
-    const target = await getMessage(targetId);
-    if (!target || !target.outgoing) return;
+  async deleteForEveryone(chat: ChatTarget, targetId: string): Promise<void> {
+    const message = await getMessage(targetId);
+    if (!message || !message.outgoing) return;
 
     const updated: StoredMessage = {
-      ...target,
+      ...message,
       body: "",
       media: undefined,
       kind: "text",
@@ -367,7 +498,7 @@ export class MessagingClient {
     await putMessage(updated);
     this.events.onStatus(updated);
 
-    await this.send(peerEmail, { kind: "deletion", body: "", target: targetId });
+    await this.send(chat, { kind: "deletion", body: "", target: targetId });
   }
 
   async markRead(chatId: string, clientMsgIds: string[]): Promise<void> {
@@ -387,14 +518,24 @@ export class MessagingClient {
     }
   }
 
-  async sendTyping(peerEmail: string, stopped = false): Promise<void> {
+  async sendTyping(target: ChatTarget, stopped = false): Promise<void> {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     const now = Date.now();
     if (!stopped && now - this.lastTypingSentAt < TYPING_THROTTLE_MS) return;
     this.lastTypingSentAt = now;
 
-    for (const device of await this.devicesFor(peerEmail)) {
-      this.socket.send(JSON.stringify({ type: "typing", to_device: device, stopped }));
+    const audience = target.kind === "group" ? target.group.members : [target.email];
+    for (const email of audience) {
+      if (email === this.api.email) continue;
+      let devices: string[];
+      try {
+        devices = await this.devicesFor(email);
+      } catch {
+        continue;
+      }
+      for (const device of devices) {
+        this.socket.send(JSON.stringify({ type: "typing", to_device: device, stopped }));
+      }
     }
   }
 
@@ -403,10 +544,13 @@ export class MessagingClient {
     return decryptBlob(ciphertext, media.key, media.iv, media.mime);
   }
 
-  async uploadMedia(peerEmail: string, blob: Blob): Promise<{ mediaId: string; key: string; iv: string }> {
+  /** `audience` must list every member allowed to download the blob; the
+   * server enforces it, so a group upload that named only one member would 404
+   * for everyone else. */
+  async uploadMedia(audience: string[], blob: Blob): Promise<{ mediaId: string; key: string; iv: string }> {
     const { encryptBlob } = await import("./media");
     const { data, key, iv } = await encryptBlob(blob);
-    const { id } = await this.api.uploadMedia(data, [peerEmail, this.api.email]);
+    const { id } = await this.api.uploadMedia(data, [...audience, this.api.email]);
     return { mediaId: id, key, iv };
   }
 

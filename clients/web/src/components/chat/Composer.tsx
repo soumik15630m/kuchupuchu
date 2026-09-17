@@ -6,16 +6,19 @@ import { Icon } from "@/components/Icon";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { compressImage, makeThumbnail, pickVoiceMimeType, videoPoster } from "@/lib/messaging/media";
+import type { ChatTarget } from "@/lib/messaging/client";
 import type { ReplyRef, StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
 
 export function Composer({
-  peerEmail,
+  target,
+  audience,
   replyTo,
   onReplyConsumed,
 }: {
-  peerEmail: string;
+  target: ChatTarget;
+  audience: string[];
   replyTo?: StoredMessage | null;
   onReplyConsumed?: () => void;
 }) {
@@ -60,8 +63,8 @@ export function Composer({
     onReplyConsumed?.();
     if (inputRef.current) inputRef.current.style.height = "auto";
     try {
-      await client.sendTyping(peerEmail, true);
-      await client.send(peerEmail, { kind: "text", body, replyTo: quoted });
+      await client.sendTyping(target, true);
+      await client.send(target, { kind: "text", body, replyTo: quoted });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't send that.");
     }
@@ -93,8 +96,8 @@ export function Composer({
 
       const quoted = replyRef();
       onReplyConsumed?.();
-      const { mediaId, key, iv } = await client.uploadMedia(peerEmail, blob);
-      await client.send(peerEmail, {
+      const { mediaId, key, iv } = await client.uploadMedia(audience, blob);
+      await client.send(target, {
         kind: "media",
         body: "",
         replyTo: quoted,
@@ -152,8 +155,8 @@ export function Composer({
       const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
       setBusy(true);
       try {
-        const { mediaId, key, iv } = await client.uploadMedia(peerEmail, blob);
-        await client.send(peerEmail, {
+        const { mediaId, key, iv } = await client.uploadMedia(audience, blob);
+        await client.send(target, {
           kind: "voice",
           body: "",
           media: { mediaId, key, iv, mime: blob.type, byteSize: blob.size, durationMs },
@@ -237,7 +240,7 @@ export function Composer({
                 setDraft(e.target.value);
                 e.target.style.height = "auto";
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-                void client?.sendTyping(peerEmail, e.target.value.length === 0);
+                void client?.sendTyping(target, e.target.value.length === 0);
               }}
             />
             <button

@@ -8,6 +8,7 @@ import { displayName, loadContacts } from "../contacts";
 import { notifyMessage, setBadge } from "../notifications";
 import { MessagingClient } from "./client";
 import { summaries, type ChatSummary, type StoredMessage } from "./store";
+import { statusReels, type StatusReel } from "./status-store";
 
 interface MessagingContextValue {
   client: MessagingClient | null;
@@ -15,10 +16,12 @@ interface MessagingContextValue {
   ready: boolean;
   chats: Map<string, ChatSummary>;
   typingFrom: string | null;
+  statuses: StatusReel[];
   /** Bumped on every change so chat views can re-read their own slice
    * without every message landing in a single shared array. */
   revision: number;
   refreshChats: () => void;
+  refreshStatuses: () => void;
 }
 
 const MessagingContext = createContext<MessagingContextValue | null>(null);
@@ -31,6 +34,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [chats, setChats] = useState<Map<string, ChatSummary>>(new Map());
   const [revision, setRevision] = useState(0);
   const [typingFrom, setTypingFrom] = useState<string | null>(null);
+  const [statuses, setStatuses] = useState<StatusReel[]>([]);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshChats = useCallback(() => {
@@ -41,6 +45,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         for (const summary of next.values()) unread += summary.unread;
         setBadge(unread);
       })
+      .catch(() => {});
+  }, []);
+
+  const refreshStatuses = useCallback(() => {
+    statusReels()
+      .then(setStatuses)
       .catch(() => {});
   }, []);
 
@@ -58,6 +68,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         bump();
       },
       onStatus: bump,
+      onStatusPost: refreshStatuses,
       onConnectionChange: setOnline,
       onTyping: ({ fromEmail, stopped }) => {
         if (typingTimer.current) clearTimeout(typingTimer.current);
@@ -81,6 +92,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         setReady(true);
       });
     refreshChats();
+    refreshStatuses();
 
     return () => {
       client.stop();
@@ -88,11 +100,21 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setReady(false);
       setOnline(false);
     };
-  }, [status, session, refreshChats]);
+  }, [status, session, refreshChats, refreshStatuses]);
 
   const value = useMemo<MessagingContextValue>(
-    () => ({ client: clientRef.current, online, ready, chats, typingFrom, revision, refreshChats }),
-    [online, ready, chats, typingFrom, revision, refreshChats]
+    () => ({
+      client: clientRef.current,
+      online,
+      ready,
+      chats,
+      typingFrom,
+      statuses,
+      revision,
+      refreshChats,
+      refreshStatuses,
+    }),
+    [online, ready, chats, typingFrom, statuses, revision, refreshChats, refreshStatuses]
   );
 
   return <MessagingContext.Provider value={value}>{children}</MessagingContext.Provider>;

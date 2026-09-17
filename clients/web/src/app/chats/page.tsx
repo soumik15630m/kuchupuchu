@@ -7,6 +7,7 @@ import { Icon } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { displayName, initials, loadContacts, saveContacts, type Contact } from "@/lib/contacts";
+import { isGroupId, loadGroups, type Group } from "@/lib/groups";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import type { StoredMessage } from "@/lib/messaging/store";
 
@@ -36,20 +37,43 @@ export default function ChatsPage() {
   const router = useRouter();
   const { chats, online, ready } = useMessaging();
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [query, setQuery] = useState("");
 
-  useEffect(() => setContacts(loadContacts()), []);
+  useEffect(() => {
+    setContacts(loadContacts());
+    setGroups(loadGroups());
+  }, [chats]);
 
   const rows = useMemo(() => {
-    const byEmail = new Map<string, { email: string; name: string; summary: ReturnType<typeof chats.get> }>();
+    type Row = { email: string; name: string; group: boolean; summary: ReturnType<typeof chats.get> };
+    const byEmail = new Map<string, Row>();
     for (const contact of contacts) {
-      byEmail.set(contact.email, { email: contact.email, name: contact.name, summary: chats.get(contact.email) });
+      byEmail.set(contact.email, {
+        email: contact.email,
+        name: contact.name,
+        group: false,
+        summary: chats.get(contact.email),
+      });
+    }
+    for (const group of groups) {
+      byEmail.set(group.id, {
+        email: group.id,
+        name: group.name,
+        group: true,
+        summary: chats.get(group.id),
+      });
     }
     // A chat can exist with someone who was never added as a contact — a first
     // message from a member is not something to hide behind an "add" step.
     for (const [chatId, summary] of chats) {
       if (!byEmail.has(chatId)) {
-        byEmail.set(chatId, { email: chatId, name: displayName(chatId, contacts), summary });
+        byEmail.set(chatId, {
+          email: chatId,
+          name: isGroupId(chatId) ? "Group" : displayName(chatId, contacts),
+          group: isGroupId(chatId),
+          summary,
+        });
       }
     }
 
@@ -68,7 +92,7 @@ export default function ChatsPage() {
         r.email.includes(q) ||
         (r.summary?.lastMessage?.body ?? "").toLowerCase().includes(q)
     );
-  }, [contacts, chats, query]);
+  }, [contacts, groups, chats, query]);
 
   function addContact() {
     const email = prompt("Their email address")?.trim().toLowerCase();
@@ -131,9 +155,19 @@ export default function ChatsPage() {
             ))}
           </PaneScroll>
 
-          <button className={styles.fab} type="button" onClick={addContact} aria-label="New chat">
-            <Icon name="plus" size={24} />
-          </button>
+          <div className={styles.fabStack}>
+            <button
+              className={styles.fabSmall}
+              type="button"
+              onClick={() => router.push("/chats/new-group")}
+              aria-label="New group"
+            >
+              <Icon name="status" size={20} />
+            </button>
+            <button className={styles.fab} type="button" onClick={addContact} aria-label="New chat">
+              <Icon name="plus" size={24} />
+            </button>
+          </div>
         </div>
       </Pane>
     </AppShell>

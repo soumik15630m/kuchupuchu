@@ -11,6 +11,7 @@ import { deviceId } from "@/lib/api/client";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { CallEngine, type CallState } from "@/lib/call/engine";
 import { displayName, initials, loadContacts } from "@/lib/contacts";
+import { getGroup, isGroupId } from "@/lib/groups";
 
 function qualityName(q: ConnectionQuality): string {
   if (q === ConnectionQuality.Excellent) return "excellent";
@@ -43,7 +44,20 @@ export default function CallPage() {
   const [now, setNow] = useState(() => Date.now());
   const [peerName, setPeerName] = useState(peerEmail);
 
-  useEffect(() => setPeerName(displayName(peerEmail, loadContacts())), [peerEmail]);
+  const [callees, setCallees] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (!isGroupId(peerEmail)) {
+      setPeerName(displayName(peerEmail, loadContacts()));
+      setCallees([peerEmail]);
+      return;
+    }
+    const group = getGroup(peerEmail);
+    setPeerName(group?.name ?? "Group");
+    // §4 caps a room at 5. The caller is added server-side, so only the other
+    // members are named here; a larger group cannot all join one call.
+    setCallees(group ? group.members.filter((m) => m !== session?.email) : []);
+  }, [peerEmail, session?.email]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -52,14 +66,15 @@ export default function CallPage() {
 
   useEffect(() => {
     if (status !== "authenticated" || !session || engineRef.current) return;
+    if (callees === null) return;
     const engine = new CallEngine(session, deviceId(), setState);
     engineRef.current = engine;
-    engine.start([peerEmail], withVideo);
+    engine.start(callees, withVideo);
     return () => {
       engine.dispose();
       engineRef.current = null;
     };
-  }, [status, session, peerEmail, withVideo]);
+  }, [status, session, peerEmail, withVideo, callees]);
 
   useEffect(() => {
     const engine = engineRef.current;

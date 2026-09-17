@@ -9,7 +9,7 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import styles from "@/components/chat/chat.module.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
-import { displayName, loadContacts } from "@/lib/contacts";
+import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { messagesFor, type StoredMessage } from "@/lib/messaging/store";
 import { wallpaperStyle } from "@/lib/theme/apply";
@@ -35,15 +35,14 @@ export default function ChatPage() {
   const { wallpaperFor } = useTheme();
   const { client, revision, typingFrom, online, ready } = useMessaging();
 
-  const [name, setName] = useState(email);
+  const chat = useChatTarget(email, revision);
+  const name = chat.title;
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [imageUrl, setImageUrl] = useState<string | undefined>();
   const [replyTo, setReplyTo] = useState<StoredMessage | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const wp = wallpaperFor(email);
-
-  useEffect(() => setName(displayName(email, loadContacts())), [email]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +92,7 @@ export default function ChatPage() {
       <Pane>
         <PaneHeader
           title={name}
-          subtitle={typingFrom === email ? "typing…" : email}
+          subtitle={typingFrom === email ? "typing…" : chat.subtitle}
           backHref="/chats"
           actions={
             <>
@@ -154,8 +153,8 @@ export default function ChatPage() {
                     <MessageBubble
                       message={message}
                       onReply={setReplyTo}
-                      onReact={(target, emoji) => void client?.react(email, target.id, emoji)}
-                      onDelete={(target) => void client?.deleteForEveryone(email, target.id)}
+                      onReact={(msg, emoji) => chat.target && void client?.react(chat.target, msg.id, emoji)}
+                      onDelete={(msg) => chat.target && void client?.deleteForEveryone(chat.target, msg.id)}
                     />
                   </div>
                 );
@@ -191,7 +190,16 @@ export default function ChatPage() {
             </div>
           )}
 
-          <Composer peerEmail={email} replyTo={replyTo} onReplyConsumed={() => setReplyTo(null)} />
+          {chat.target ? (
+            <Composer
+              target={chat.target}
+              audience={chat.audience}
+              replyTo={replyTo}
+              onReplyConsumed={() => setReplyTo(null)}
+            />
+          ) : (
+            <p className={styles.composerError}>This group is no longer on this device.</p>
+          )}
         </div>
       </Pane>
     </AppShell>

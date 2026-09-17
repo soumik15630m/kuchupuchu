@@ -31,7 +31,7 @@ export interface StoredMessage {
   chatId: string;
   fromEmail: string;
   outgoing: boolean;
-  kind: "text" | "media" | "voice";
+  kind: "text" | "media" | "voice" | "sticker";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
