@@ -1,11 +1,24 @@
-version: "3.9"
-
 # Phase 1 scope (design-doc-v6.md §13): SFU + minimal auth walking skeleton.
 # wake-service / messaging-service (Phases 5-6) are stubbed as folders only —
 # not wired in here yet. See §1a for the still-open port-forward/tunnel
 # decision this stack depends on for reachability beyond the local network.
 
 services:
+  # Signs dev TLS certs for the current hostnames before anything
+  # serving TLS starts. Does nothing unless DEV_AUTO_CERTS is true,
+  # which is what keeps it safe in the base file. /caroot is the host's
+  # mkcert CA: signing needs its private key, so there is no way to
+  # produce host-trusted certs without mounting it.
+  cert-init:
+    build: ./infra/certgen
+    env_file: .env
+    environment:
+      - DEV_AUTO_CERTS=${DEV_AUTO_CERTS:-false}
+    volumes:
+      - ./certs:/certs
+      - ${MKCERT_CAROOT:-./infra/certgen/no-caroot}:/caroot:ro
+    restart: "no"
+
   nginx:
     build: ./infra/nginx
     env_file: .env
@@ -15,8 +28,12 @@ services:
       - "3478:3478/tcp"
       - "49160-49200:49160-49200/udp"
     depends_on:
-      - livekit
-      - auth-service
+      cert-init:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+      auth-service:
+        condition: service_started
     volumes:
       - ./certs:/etc/letsencrypt:ro
       # §13 Phase 3/4 testing aid only -- getUserMedia() requires a secure
@@ -37,13 +54,20 @@ services:
     # container in `network_mode: service:X` can't declare its own ports.
     volumes:
       - ./certs:/etc/letsencrypt:ro
+    depends_on:
+      cert-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    # Digest-pinned for the same reason as the built images -- see the
+    # note at the top of infra/nginx/Dockerfile.
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    # `:?` refuses to start rather than substituting "" and running
+    # --requirepass with an empty password.
     command: >
       redis-server
-      --requirepass ${REDIS_PASSWORD}
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env (openssl rand -hex 32)}
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
     volumes:

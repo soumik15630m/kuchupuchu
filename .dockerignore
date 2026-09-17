@@ -1,0 +1,24 @@
+# Keeps build contexts to what the Dockerfiles actually COPY. Without this,
+# `COPY app ./app` carries whatever __pycache__ happens to be lying around
+# into the image -- stale .pyc files that shadow nothing useful and make
+# image digests depend on the host's last test run.
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/node_modules/
+
+# Never belongs in an image, and several of these would be secrets.
+.env
+.env.*
+!.env.example
+certs/
+**/*.pem
+**/*.key
+data/
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+
+.git/
+.claude/

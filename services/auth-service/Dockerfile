@@ -1,4 +1,14 @@
-FROM python:3.12-slim
+# Pinned by digest, not just tag: a tag is mutable and can be repointed at
+# different bytes at any time. The rest of this stack already refuses to
+# trust mutable references -- pip deps are hash-locked
+# (requirements.txt), and the harness SRI-pins both the LiveKit UMD build
+# and its E2EE worker -- so leaving the base images on bare tags was the
+# one unpinned link left in the supply chain. The tag is kept alongside
+# the digest purely so a human can see what version this is.
+#
+# To bump: change the tag, then re-resolve the digest with
+#   docker buildx imagetools inspect <image>:<tag> --format '{{.Manifest.Digest}}'
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 

@@ -26,11 +26,31 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
+    # No referrer at all: URLs here carry device ids and member emails as
+    # path segments (/auth/prekeys/{email}/{device_id}), which must not
+    # leak to any third party a page might link out to.
+    add_header Referrer-Policy "no-referrer" always;
+    # The API surface has no use for any of these; the harness asks for
+    # camera/microphone on its own origin, which this doesn't block.
+    add_header Permissions-Policy "geolocation=(), payment=(), usb=(), interest-cohort=()" always;
     add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" always;
 
     # Every payload this API accepts fits comfortably under this; a body
     # over it is rejected by nginx before it's read into the app's memory.
     client_max_body_size 16k;
+
+    # LiveKit's server-to-server admin API (RemoveParticipant, ListRooms,
+    # ...). auth-service reaches it directly over the compose network as
+    # LIVEKIT_INTERNAL_URL, so nothing legitimate calls it from outside.
+    # LiveKit does authenticate these itself -- they need a JWT signed
+    # with LIVEKIT_API_SECRET carrying roomAdmin/roomList grants, which
+    # no room token this service mints ever has -- so this is defence in
+    # depth rather than a hole being closed. Exposing an admin API to the
+    # internet when the only caller is on the same bridge network is
+    # surface with no upside.
+    location /twirp/ {
+        return 404;
+    }
 
     # LiveKit signaling (WSS) — SFU handles the actual media, this is just
     # the signaling/control-plane WebSocket.
@@ -49,7 +69,13 @@ server {
         limit_req zone=auth_zone burst=20 nodelay;
         proxy_pass http://auth-service:8080/;
         proxy_set_header Host $host;
+        # app/routers/auth.py's per-IP OTP limiter reads this. nginx sets
+        # it from the real peer address, overwriting anything the client
+        # sent -- which is what makes it trustworthy there. Keep these
+        # two in step: the app treats a missing header as "unknown" and
+        # would bucket every caller together.
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
     }
 
     location /healthz {
@@ -73,6 +99,8 @@ server {
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Permissions-Policy "geolocation=(), payment=(), usb=(), interest-cohort=()" always;
         # Loosened relative to the server-wide policy above, and ONLY
         # here: the harness loads livekit-client's UMD build and its
         # E2EE worker script from jsdelivr (index.html/key-provider.js),
