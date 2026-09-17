@@ -16,6 +16,7 @@ const {
 
 import { GroupKeyProvider, createE2eeWorker } from "./key-provider.js";
 import { GroupE2EE, DATA_TOPIC } from "./group-e2ee.js";
+import { loadIdentity, saveIdentity } from "./identity-store.js";
 
 const logEl = document.getElementById("log");
 function log(...parts) {
@@ -30,22 +31,10 @@ let dataSaverOn = false;
 let audioOnly = false;
 let poorQualityStreak = 0;
 let e2ee = null;
-let cachedCryptoIdentity = null;
 
-// Every /auth/* call in this file used to be a relative fetch (e.g.
-// fetch("/auth/prekeys/me")), which resolves against whatever origin is
-// serving *this page* -- fine if the harness happens to be served
-// through the same nginx that proxies /auth/ (as it apparently once
-// was), silently wrong the moment it's opened any other way (a plain
-// `python3 -m http.server`, a different dev server, file://, ...), and
-// nothing about that failure mode says so -- it just 501s or 404s
-// depending on what's actually listening on the harness's own origin.
-// WEB_CLIENT_ORIGIN existing as a CORS setting on the backend is the
-// tell: this was always meant to be genuinely cross-origin. The LiveKit
-// URL field already has the one hostname that's guaranteed to be
-// correct (nginx's app.conf.template proxies both LiveKit signaling and
-// /auth/ from the same server block), so derive the API origin from it
-// instead of assuming same-origin.
+// Derived from the LiveKit URL, not the page origin: nginx proxies
+// both LiveKit signaling and /auth/ from the same server block, and
+// this harness is not always served from that origin.
 function apiBaseUrl() {
   const liveKitUrl = document.getElementById("url").value.trim();
   if (!liveKitUrl) return "";
@@ -106,6 +95,17 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
       if (!res.ok) throw new Error(`prekey bundle fetch failed for ${deviceId}: ${res.status}`);
       return res.json();
     },
+    // Separate endpoint from fetchBundle on purpose: this one does not
+    // consume a one-time prekey, so verifying an inbound X3DH initial
+    // message can't be used to drain a peer's prekey pool.
+    fetchIdentity: async (email, deviceId) => {
+      const res = await fetch(
+        `${apiBaseUrl()}/auth/prekeys/${encodeURIComponent(email)}/${encodeURIComponent(deviceId)}/identity`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) throw new Error(`identity fetch failed for ${deviceId}: ${res.status}`);
+      return res.json();
+    },
     emailForIdentity: (identity) => {
       const email = roster[identity];
       if (!email) throw new Error(`no email in the device→email roster for identity "${identity}"`);
@@ -114,6 +114,11 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
     onFingerprintChanged: (fp, generation) => {
       log(`E2EE fingerprint: ${fp} (generation ${generation})`);
       updateFingerprintUi(fp, generation);
+    },
+    onIdentityChanged: async (identity) => {
+      // A one-time prekey was just consumed; re-persist so a reload
+      // can't bring it back.
+      await saveIdentity(currentDeviceId(), identity);
     },
     onIdentitySafetyNumber: (peerIdentity, safetyNumber) => {
       log(`E2EE identity safety number for ${peerIdentity}: ${safetyNumber}`);
@@ -125,31 +130,62 @@ async function publishPrekeysAndStartE2ee(keyProvider) {
     },
   });
 
-  // currentDeviceId() only returns the real identity once room.connect()
-  // has resolved -- calling this any earlier would publish a bundle
-  // under "unknown-device" and every peer's bundle fetch for us would
-  // 404 forever. This function is only ever called after connect().
-  const publishPayload = await e2ee.initialize(currentDeviceId(), cachedCryptoIdentity);
+  // Only valid after connect() resolves; earlier it would publish under
+  // "unknown-device" and every peer's fetch for us would 404.
+  const deviceId = currentDeviceId();
+
+  // The identity key is write-once server side: a fresh one for an
+  // existing device id 409s and can never be published again.
+  const storedIdentity = await loadIdentity(deviceId);
+  if (storedIdentity) log(`E2EE: reusing stored crypto identity for ${deviceId}`);
+
+  const publishPayload = await e2ee.initialize(deviceId, storedIdentity);
   const res = await fetch(`${apiBaseUrl()}/auth/prekeys/me`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify(publishPayload),
   });
   if (!res.ok) {
-    log(`E2EE: publishing prekey bundle failed (${res.status}) — calls in this session will be unencrypted`);
+    // setE2EEEnabled(true) has already run, so without disabling it
+    // below the call continues with encryption active and no key:
+    // every frame fails forever. A 409 means the device already
+    // published a different identity key.
+    if (res.status === 409) {
+      log(
+        "E2EE: this device id already published a different identity key (409). " +
+          "The harness keeps its crypto identity in memory, so a page reload generates a new one -- " +
+          "use a fresh device id, or reconnect without reloading."
+      );
+    } else {
+      log(`E2EE: publishing prekey bundle failed (${res.status})`);
+    }
+    try {
+      await room.setE2EEEnabled(false);
+      log("E2EE: DISABLED for this call — media is NOT end-to-end encrypted. Reconnect with a fresh device id to restore it.");
+    } catch (err) {
+      log(`E2EE: could not disable frame encryption after the failure (${err.message}) — disconnect and start over`);
+    }
     e2ee = null;
     return false;
   }
   log("E2EE: prekey bundle published");
-  cachedCryptoIdentity = e2ee.identity;
+  // Only after the server accepted it -- saving earlier would strand an
+  // identity the server never took.
+  if (!storedIdentity) {
+    await saveIdentity(deviceId, e2ee.identity);
+    log(`E2EE: crypto identity stored for ${deviceId} — survives reload`);
+  }
   return true;
 }
 
 function currentRoomMembership() {
-  const local = { identity: room.localParticipant.identity, joinedAtMs: room.localParticipant.joinedAt?.getTime() ?? 0 };
+  // null, not 0: 0 would look like the earliest joiner and win the
+  // rotator election. See electRotator.
+  const joinedAtMs = (p) => p.joinedAt?.getTime() ?? null;
+  const local = { identity: room.localParticipant.identity, joinedAtMs: joinedAtMs(room.localParticipant) };
   const remotes = [...room.remoteParticipants.values()].map((p) => ({
     identity: p.identity,
-    joinedAtMs: p.joinedAt?.getTime() ?? 0,
+    joinedAtMs: joinedAtMs(p),
   }));
   return [local, ...remotes];
 }
@@ -320,6 +356,33 @@ async function probeIceConnectivity(iceServers) {
   }
 }
 
+/** The default microphone and a microphone that opens are not the same
+ * thing: a Bluetooth headset in A2DP mode advertises an audioinput the
+ * browser selects and then fails to open with NotReadableError, which
+ * looks like a permissions fault and isn't. Returns null to let the
+ * browser choose if nothing opens. */
+async function pickUsableAudioInput() {
+  let devices;
+  try {
+    devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
+  } catch {
+    return null;
+  }
+  // "default"/"communications" point at whichever device Windows
+  // favours, which is the thing being worked around.
+  const real = devices.filter((d) => d.deviceId !== "default" && d.deviceId !== "communications");
+  for (const d of real.length ? real : devices) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: d.deviceId } } });
+      stream.getTracks().forEach((t) => t.stop());
+      return { deviceId: d.deviceId, label: d.label };
+    } catch {
+      // A device that won't open is what we're here to skip.
+    }
+  }
+  return null;
+}
+
 async function connect() {
   const url = document.getElementById("url").value.trim();
   const token = document.getElementById("token").value.trim();
@@ -330,7 +393,24 @@ async function connect() {
     log("ICE server list is not valid JSON, connecting without it");
   }
 
+  const relayOnly = new URLSearchParams(location.search).get("relay") === "1";
+  if (relayOnly) {
+    log("relay-only mode: forcing all media through TURN (?relay=1)");
+    if (!iceServers.some((s) => [].concat(s.urls).some((u) => /^turns?:/.test(u)))) {
+      log("  WARNING: no TURN server in the ICE list -- relay-only will find no candidates at all");
+    }
+  }
+
   await probeIceConnectivity(iceServers);
+
+  // Pick a microphone that actually opens, before LiveKit picks one that
+  // doesn't. See pickUsableAudioInput.
+  const audioInput = await pickUsableAudioInput();
+  if (audioInput) {
+    log(`microphone: using "${audioInput.label || audioInput.deviceId}"`);
+  } else {
+    log("microphone: no audio input could be opened -- the call will be video-only if publishing fails");
+  }
 
   const e2eeUserWantsIt = document.getElementById("e2eeEnabled").checked;
   const keyProvider = makeKeyProvider();
@@ -353,7 +433,8 @@ async function connect() {
       dynacast: true,
     },
     adaptiveStream: true,
-    rtcConfig: iceServers.length ? { iceServers } : undefined,
+    audioCaptureDefaults: audioInput ? { deviceId: audioInput.deviceId } : undefined,
+    // rtcConfig is a connect option, not a room option -- see connect().
     // §6/§13 Phase 4: the key provider has to exist before connect() per
     // LiveKit's own setup order, but it starts out empty -- no key is
     // applied until publishPrekeysAndStartE2ee() runs after connect(),
@@ -376,33 +457,12 @@ async function connect() {
       }
     });
     room.on(RoomEvent.EncryptionError, (error) => {
-      // Two reasoned fixes (own-identity key registration, then
-      // E2EE-before-media-publish ordering) both failed to resolve
-      // this in real testing -- meaning the actual cause is still
-      // unknown, not just "one more thing to hedge against". Dumping
-      // every own property of the error object, not just .name/.message,
-      // since those two alone haven't told us anything new across
-      // multiple real test runs. An earlier version of this handler had
-      // a real gap: it fell back to JSON.stringify(error) only if
-      // .message was falsy, which it never is -- so any extra fields
-      // LiveKit's CryptorError might carry (a .reason code,
-      // .participantIdentity, .frameCryptorState) were never actually
-      // being logged despite a comment here claiming they were.
-      const details = {};
-      for (const key of Object.getOwnPropertyNames(error)) {
-        if (key === "stack") continue; // too noisy for the log panel
-        details[key] = error[key];
-      }
-      log(`E2EE: EncryptionError -- ${JSON.stringify(details)}`);
+      // The worker re-wraps failures as a plain Error before postMessage,
+      // so only name/message/stack survive the structured clone. The
+      // message is prefixed with the CryptorError reason name.
+      log(`E2EE: EncryptionError -- ${error.name ?? "Error"}: ${error.message ?? String(error)}`);
     });
   }
-
-  // Debug-only exposure for this specific investigation -- lets you run
-  // things like `window.__debug.keyProvider` or check
-  // `typeof window.__debug.keyProvider.onSetEncryptionKey` directly in
-  // devtools, since `room` and `keyProvider` are otherwise trapped in
-  // this module's scope and unreachable from the console.
-  window.__debug = { room, keyProvider, e2ee };
 
   room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
     if (participant !== room.localParticipant) return;
@@ -460,8 +520,16 @@ async function connect() {
   const CONNECT_TIMEOUT_MS = 20000;
   const startedAt = performance.now();
   try {
+    // livekit reads this as `engine.rtcConfig = connOptions.rtcConfig`.
+    // Passed to `new Room({...})` instead it is silently discarded and
+    // the TURN list never reaches the SFU -- every call then gathers
+    // only host/srflx and the relay is never a candidate.
+    const connectOptions = iceServers.length
+      ? { rtcConfig: { iceServers, ...(relayOnly ? { iceTransportPolicy: "relay" } : {}) } }
+      : undefined;
+
     await Promise.race([
-      room.connect(url, token),
+      room.connect(url, token, connectOptions),
       new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error(`connect() did not resolve within ${CONNECT_TIMEOUT_MS}ms -- likely stuck in ICE gathering/checking`)),
@@ -587,6 +655,29 @@ async function setAudioOnly(on) {
   await room.localParticipant.setCameraEnabled(!on);
   log("audio-only:", on ? "on" : "off");
 }
+
+// `?device=<id>` pre-fills the form from a staged config file, so the
+// second device doesn't hand-type a room token on a phone. That file
+// holds real tokens -- local testing only, delete after use.
+async function prefillFromQuery() {
+  const deviceId = new URLSearchParams(location.search).get("device");
+  if (!deviceId) return;
+  try {
+    const res = await fetch(`./e2e-config.json?v=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`config fetch failed: ${res.status}`);
+    const cfg = (await res.json())[deviceId];
+    if (!cfg) throw new Error(`no entry for "${deviceId}" in e2e-config.json`);
+    document.getElementById("url").value = cfg.url;
+    document.getElementById("token").value = cfg.token;
+    document.getElementById("accessToken").value = cfg.accessToken;
+    document.getElementById("ice").value = JSON.stringify(cfg.ice);
+    document.getElementById("roster").value = JSON.stringify(cfg.roster);
+    log(`pre-filled for ${deviceId} — press Connect`);
+  } catch (err) {
+    log(`could not pre-fill from ?device=${deviceId}: ${err.message}`);
+  }
+}
+prefillFromQuery();
 
 document.getElementById("connectBtn").addEventListener("click", () => connect().catch((e) => log("connect failed:", e.message)));
 document.getElementById("disconnectBtn").addEventListener("click", disconnect);
