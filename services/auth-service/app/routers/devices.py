@@ -12,13 +12,15 @@ time — see app/migrate.py) rather than exposed to every allowlisted member.
 """
 from fastapi import APIRouter, Header, HTTPException
 
-from app.auth_deps import parse_access_token
+from app.auth_deps import parse_access_token, require_active_device
 from app.devices import (
     DeviceNotFoundError,
     NotDeviceOwnerError,
     admin_revoke_device,
     get_all_device_versions,
     is_admin_email,
+    is_allowlisted,
+    list_active_device_ids,
     list_devices_for_email,
     revoke_all_devices,
     revoke_device,
@@ -142,6 +144,23 @@ async def admin_revoke_all_devices_for(email: str, authorization: str | None = H
         "deviceIds": device_ids,
         "disconnectedLiveSessions": disconnected,
     }
+
+
+@router.get("/peer/{email}")
+def peer_devices(email: str, authorization: str | None = Header(default=None)):
+    """Another member's active device ids, so a sender can address one
+    encrypted copy per device (§6/§10.4).
+
+    Uses the strict check: this is addressing information for live
+    messaging, not the lockout-explanation screen `_require_access_token`
+    exists for. Restricted to allowlisted members, and returns ids only --
+    no status, platform or timestamps, none of which a peer needs.
+    """
+    require_active_device(authorization)
+    target = email.strip().lower()
+    if not is_allowlisted(target):
+        raise HTTPException(status_code=404, detail="not a known member")
+    return {"email": target, "devices": list_active_device_ids(target)}
 
 
 @router.get("/versions")

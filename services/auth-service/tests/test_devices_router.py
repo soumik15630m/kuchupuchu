@@ -123,3 +123,50 @@ def test_versions_includes_allowlisted_members_with_no_devices_yet(client, fresh
 
     res = client.get("/devices/versions", headers={"Authorization": f"Bearer {token}"})
     assert res.json()["versions"]["b@example.com"] == 0
+
+
+def test_peer_devices_requires_auth(client):
+    res = client.get("/devices/peer/a@example.com")
+    assert res.status_code == 401
+
+
+def test_peer_devices_lists_a_members_active_devices(client, fresh_db):
+    register_device(fresh_db, "a@example.com", "dev-1")
+    register_device(fresh_db, "b@example.com", "dev-b1")
+    register_device(fresh_db, "b@example.com", "dev-b2")
+    token = access_token_for("a@example.com", "dev-1")
+
+    res = client.get("/devices/peer/b@example.com", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200
+    assert res.json() == {"email": "b@example.com", "devices": ["dev-b1", "dev-b2"]}
+
+
+def test_peer_devices_omits_revoked_devices(client, fresh_db):
+    register_device(fresh_db, "a@example.com", "dev-1")
+    register_device(fresh_db, "b@example.com", "dev-b1")
+    register_device(fresh_db, "b@example.com", "dev-b2")
+    fresh_db.execute("UPDATE devices SET status = 'revoked' WHERE id = 'dev-b1'")
+    fresh_db.commit()
+    token = access_token_for("a@example.com", "dev-1")
+
+    res = client.get("/devices/peer/b@example.com", headers={"Authorization": f"Bearer {token}"})
+    assert res.json()["devices"] == ["dev-b2"]
+
+
+def test_peer_devices_404s_for_a_non_member(client, fresh_db):
+    register_device(fresh_db, "a@example.com", "dev-1")
+    token = access_token_for("a@example.com", "dev-1")
+
+    res = client.get("/devices/peer/stranger@example.com", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 404
+
+
+def test_peer_devices_rejects_a_revoked_caller(client, fresh_db):
+    register_device(fresh_db, "a@example.com", "dev-1")
+    register_device(fresh_db, "b@example.com", "dev-b1")
+    fresh_db.execute("UPDATE devices SET status = 'revoked' WHERE id = 'dev-1'")
+    fresh_db.commit()
+    token = access_token_for("a@example.com", "dev-1")
+
+    res = client.get("/devices/peer/b@example.com", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 401

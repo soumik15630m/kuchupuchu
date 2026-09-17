@@ -106,6 +106,22 @@ def list_devices_for_email(email: str):
     ).fetchall()
 
 
+def list_active_device_ids(email: str) -> list[str]:
+    """Active device ids for a member, for addressing E2EE messages.
+
+    Signal sessions are per device pair, so a sender has to encrypt once
+    per recipient device and therefore has to know which devices exist.
+    `/prekeys/{email}/{device_id}` already assumes the caller knows the
+    peer's device ids; nothing exposed them.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT id FROM devices WHERE email = ? AND status = 'active' ORDER BY created_at",
+        (email.lower(),),
+    ).fetchall()
+    return [row["id"] for row in rows]
+
+
 def is_allowlisted(email: str) -> bool:
     """Whether `email` is a known member (§1's <=10-member allowlist).
 
