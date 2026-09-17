@@ -6,6 +6,10 @@ import type { PrekeyBundle, PublishPayload } from "../crypto/signal-crypto";
 // own route, not the one the browser sees.
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/auth";
 
+// The messaging service is proxied under its own prefix, also with a
+// trailing-slash proxy_pass, so paths here are service-root relative too.
+export const MSG_BASE = process.env.NEXT_PUBLIC_MSG_BASE ?? "/msg";
+
 const REFRESH_KEY = "kuchupuchu:refresh";
 const DEVICE_KEY = "kuchupuchu:device";
 const EMAIL_KEY = "kuchupuchu:email";
@@ -200,6 +204,100 @@ export class Session {
   reportQuality(body: unknown): Promise<void> {
     return this.authed("/quality/report", { method: "POST", body: JSON.stringify(body) });
   }
+
+  peerDevices(email: string): Promise<{ email: string; devices: string[] }> {
+    return this.authed(`/devices/peer/${encodeURIComponent(email)}`);
+  }
+
+  /** The messaging service sits behind a different nginx prefix, so these
+   * bypass `authed`'s API_BASE. They still need the same 401-retry, hence
+   * `msgAuthed` rather than a bare fetch. */
+  private async msgAuthed<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (!this.accessToken) await this.refresh();
+    const send = async (token: string): Promise<T> => {
+      const res = await fetch(`${MSG_BASE}${path}`, {
+        ...init,
+        headers: {
+          ...(init.body instanceof FormData ? {} : { "content-type": "application/json" }),
+          ...(init.headers ?? {}),
+          authorization: `Bearer ${token}`,
+        },
+      });
+      if (!res.ok) throw new ApiError(res.status, await parseError(res));
+      const type = res.headers.get("content-type") ?? "";
+      if (!type.includes("application/json")) return (await res.arrayBuffer()) as T;
+      return (await res.json()) as T;
+    };
+
+    try {
+      return await send(this.accessToken!);
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 401) throw err;
+      return send(await this.refresh());
+    }
+  }
+
+  sendMessage(body: SendMessageBody): Promise<{ status: string; ids: string[] }> {
+    return this.msgAuthed("/send", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  pendingMessages(): Promise<{ messages: WireMessage[] }> {
+    return this.msgAuthed("/pending");
+  }
+
+  ackDelivered(messageIds: string[]): Promise<{ count: number }> {
+    return this.msgAuthed("/receipts/delivered", {
+      method: "POST",
+      body: JSON.stringify({ message_ids: messageIds }),
+    });
+  }
+
+  ackRead(clientMsgIds: string[]): Promise<{ count: number }> {
+    return this.msgAuthed("/receipts/read", {
+      method: "POST",
+      body: JSON.stringify({ client_msg_ids: clientMsgIds }),
+    });
+  }
+
+  async uploadMedia(blob: Blob, audience: string[]): Promise<{ id: string }> {
+    const form = new FormData();
+    form.append("file", blob, "blob.bin");
+    form.append("audience", audience.join(","));
+    return this.msgAuthed("/media", { method: "POST", body: form });
+  }
+
+  downloadMedia(mediaId: string): Promise<ArrayBuffer> {
+    return this.msgAuthed(`/media/${encodeURIComponent(mediaId)}`);
+  }
+
+  /** The browser WebSocket API cannot set an Authorization header, so the
+   * access token goes in the query string. It must be the short-lived access
+   * token, never the refresh token — this lands in the server's access log. */
+  async socketUrl(): Promise<string> {
+    if (!this.accessToken) await this.refresh();
+    const base = MSG_BASE.startsWith("http")
+      ? MSG_BASE.replace(/^http/, "ws")
+      : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${MSG_BASE}`;
+    return `${base}/ws?token=${encodeURIComponent(this.accessToken!)}`;
+  }
+}
+
+export interface WireMessage {
+  id: string;
+  client_msg_id: string;
+  from_email: string;
+  from_device: string;
+  to_email: string;
+  to_device: string;
+  kind: string;
+  envelope: string;
+  created_at: string;
+}
+
+export interface SendMessageBody {
+  client_msg_id: string;
+  kind: string;
+  recipients: { email: string; device_id: string; envelope: string }[];
 }
 
 export interface DeviceRow {

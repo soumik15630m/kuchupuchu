@@ -4,35 +4,62 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
+import { Composer } from "@/components/chat/Composer";
+import { MessageBubble } from "@/components/chat/MessageBubble";
+import styles from "@/components/chat/chat.module.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
 import { displayName, loadContacts } from "@/lib/contacts";
-import { appendMessage, formatTime, loadMessages, type Message } from "@/lib/messages";
+import { useMessaging } from "@/lib/messaging/MessagingProvider";
+import { messagesFor, type StoredMessage } from "@/lib/messaging/store";
 import { wallpaperStyle } from "@/lib/theme/apply";
 import { useTheme } from "@/lib/theme/ThemeProvider";
 import { getWallpaper } from "@/lib/theme/wallpaper-store";
 
-import styles from "./chat.module.css";
+function dayLabel(ms: number): string {
+  const date = new Date(ms);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  if (same(date, today)) return "Today";
+  if (same(date, yesterday)) return "Yesterday";
+  return date.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
+}
 
 export default function ChatPage() {
   const params = useParams<{ email: string }>();
   const router = useRouter();
   const email = decodeURIComponent(params.email);
   const { wallpaperFor } = useTheme();
+  const { client, revision, typingFrom, online, ready } = useMessaging();
 
   const [name, setName] = useState(email);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [draft, setDraft] = useState("");
+  const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [imageUrl, setImageUrl] = useState<string | undefined>();
-  const streamRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   const wp = wallpaperFor(email);
 
+  useEffect(() => setName(displayName(email, loadContacts())), [email]);
+
   useEffect(() => {
-    setName(displayName(email, loadContacts()));
-    setMessages(loadMessages(email));
-  }, [email]);
+    let cancelled = false;
+    messagesFor(email).then((loaded) => {
+      if (!cancelled) setMessages(loaded.sort((a, b) => a.sentAtMs - b.sentAtMs));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [email, revision]);
+
+  // Opening a chat is what marks its incoming messages read.
+  useEffect(() => {
+    if (!client) return;
+    const unread = messages.filter((m) => !m.outgoing && m.status !== "read").map((m) => m.id);
+    if (unread.length > 0) void client.markRead(email, unread);
+  }, [client, email, messages]);
 
   useEffect(() => {
     if (wp.kind !== "image") {
@@ -53,121 +80,93 @@ export default function ChatPage() {
   }, [wp.kind, wp.value]);
 
   useLayoutEffect(() => {
-    const el = streamRef.current?.parentElement;
+    const el = canvasRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
-
-  function send() {
-    const body = draft.trim();
-    if (!body) return;
-    setMessages((prev) => [...prev, appendMessage(email, body, true)]);
-    setDraft("");
-    if (inputRef.current) inputRef.current.style.height = "auto";
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    // Enter sends, Shift+Enter breaks the line — but only where there is a
-    // keyboard to hold Shift on. On a touch keyboard Enter must insert a
-    // newline, since there is no other way to type one.
-    if (e.key !== "Enter" || e.shiftKey) return;
-    if (matchMedia("(pointer: coarse)").matches) return;
-    e.preventDefault();
-    send();
-  }
+  }, [messages, typingFrom]);
 
   const style = wallpaperStyle(wp, imageUrl);
+  let lastDay = "";
 
   return (
-    <AppShell
-      pane="detail"
-      detail={
-        <Pane>
-          <PaneHeader
-            title={name}
-            subtitle={email}
-            backHref="/chats"
-            actions={
-              <>
-                <button
-                  className={paneStyles.iconButton}
-                  type="button"
-                  aria-label="Video call"
-                  onClick={() => router.push(`/call/${encodeURIComponent(email)}?video=1`)}
-                >
-                  <Icon name="video" size={21} />
-                </button>
-                <button
-                  className={paneStyles.iconButton}
-                  type="button"
-                  aria-label="Voice call"
-                  onClick={() => router.push(`/call/${encodeURIComponent(email)}`)}
-                >
-                  <Icon name="phone" size={20} />
-                </button>
-              </>
-            }
-          />
-
-          <div className={styles.chat}>
-            <div
-              className={styles.canvas}
-              style={{
-                backgroundColor: style.backgroundColor,
-                backgroundImage: style.backgroundImage,
-                backgroundSize: style.backgroundSize,
-              }}
-            >
-              {style.dim > 0 && <span className={styles.scrim} style={{ opacity: style.dim }} />}
-              <div className={styles.stream} ref={streamRef}>
-                {messages.length === 0 && (
-                  <p className={styles.empty}>No messages yet — this chat is stored on this device.</p>
-                )}
-                {messages.map((m) => (
-                  <div key={m.id} className={`${styles.bubble} ${m.outgoing ? styles.out : styles.in}`}>
-                    {m.body}
-                    <span className={styles.meta}>{formatTime(m.sentAtMs)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className={styles.composer}>
-              <div className={styles.field}>
-                <span className={styles.composerIcon}>
-                  <Icon name="emoji" size={21} />
-                </span>
-                <textarea
-                  ref={inputRef}
-                  className={styles.input}
-                  rows={1}
-                  value={draft}
-                  placeholder="Message"
-                  aria-label="Message"
-                  onKeyDown={onKeyDown}
-                  onChange={(e) => {
-                    setDraft(e.target.value);
-                    e.target.style.height = "auto";
-                    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-                  }}
-                />
-                <span className={styles.composerIcon}>
-                  <Icon name="attach" size={20} />
-                </span>
-              </div>
+    <AppShell pane="detail">
+      <Pane>
+        <PaneHeader
+          title={name}
+          subtitle={typingFrom === email ? "typing…" : email}
+          backHref="/chats"
+          actions={
+            <>
               <button
-                className={styles.send}
+                className={paneStyles.iconButton}
                 type="button"
-                aria-label={draft.trim() ? "Send" : "Record voice note"}
-                onClick={send}
+                aria-label="Video call"
+                onClick={() => router.push(`/call/${encodeURIComponent(email)}?video=1`)}
               >
-                <Icon name={draft.trim() ? "send" : "mic"} size={20} />
+                <Icon name="video" size={21} />
               </button>
+              <button
+                className={paneStyles.iconButton}
+                type="button"
+                aria-label="Voice call"
+                onClick={() => router.push(`/call/${encodeURIComponent(email)}`)}
+              >
+                <Icon name="phone" size={20} />
+              </button>
+              <button
+                className={paneStyles.iconButton}
+                type="button"
+                aria-label="Chat settings"
+                onClick={() => router.push(`/chats/${encodeURIComponent(email)}/settings`)}
+              >
+                <Icon name="settings" size={20} />
+              </button>
+            </>
+          }
+        />
+
+        {ready && !online && <div className={styles.offline}>Offline — messages will send when reconnected</div>}
+
+        <div className={styles.chat}>
+          <div
+            ref={canvasRef}
+            className={styles.canvas}
+            style={{
+              backgroundColor: style.backgroundColor,
+              backgroundImage: style.backgroundImage,
+              backgroundSize: style.backgroundSize,
+            }}
+          >
+            {style.dim > 0 && <span className={styles.scrim} style={{ opacity: style.dim }} />}
+            <div className={styles.stream}>
+              {messages.length === 0 && (
+                <p className={styles.empty}>
+                  No messages yet. Everything here is end-to-end encrypted.
+                </p>
+              )}
+              {messages.map((message) => {
+                const day = dayLabel(message.sentAtMs);
+                const separator = day !== lastDay ? day : null;
+                lastDay = day;
+                return (
+                  <div key={message.id} style={{ display: "contents" }}>
+                    {separator && <span className={styles.daySeparator}>{separator}</span>}
+                    <MessageBubble message={message} />
+                  </div>
+                );
+              })}
+              {typingFrom === email && (
+                <div className={styles.typing} aria-label={`${name} is typing`}>
+                  <span className={styles.typingDot} />
+                  <span className={styles.typingDot} />
+                  <span className={styles.typingDot} />
+                </div>
+              )}
             </div>
           </div>
-        </Pane>
-      }
-    >
-      {null}
+
+          <Composer peerEmail={email} />
+        </div>
+      </Pane>
     </AppShell>
   );
 }

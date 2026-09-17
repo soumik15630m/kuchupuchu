@@ -1,0 +1,400 @@
+.chat {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background-repeat: repeat;
+  --wp-tint: rgba(0, 0, 0, 0.06);
+}
+
+:global([data-theme="dark"]) .canvas {
+  --wp-tint: rgba(255, 255, 255, 0.05);
+}
+
+.scrim {
+  position: sticky;
+  top: 0;
+  height: 100%;
+  margin-bottom: -100%;
+  background: #000;
+  pointer-events: none;
+}
+
+.stream {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 10px 8px;
+  min-height: 100%;
+  justify-content: flex-end;
+}
+
+.daySeparator {
+  align-self: center;
+  margin: 10px 0 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-overlay);
+  color: #fff;
+  font-size: calc(11.5px * var(--font-scale));
+  font-weight: 500;
+}
+
+.bubble {
+  position: relative;
+  max-width: min(78%, 560px);
+  padding: 6px 9px 5px;
+  border-radius: var(--radius-bubble);
+  font-size: calc(14.5px * var(--font-scale));
+  color: var(--bubble-ink);
+  box-shadow: var(--shadow-1);
+  word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bubble[data-kind="media"] {
+  padding: 4px 4px 3px;
+}
+
+.in {
+  align-self: flex-start;
+  background: var(--bubble-in);
+  border-top-left-radius: 2px;
+}
+
+.out {
+  align-self: flex-end;
+  background: var(--bubble-out);
+  border-top-right-radius: 2px;
+}
+
+.body {
+  white-space: pre-wrap;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-end;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--bubble-meta);
+}
+
+.tick {
+  font-size: calc(11px * var(--font-scale));
+  letter-spacing: -2px;
+}
+
+.tick[data-read="true"] {
+  color: #53bdeb;
+}
+
+.tick[data-failed="true"] {
+  color: var(--danger);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* Media */
+.media {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.media[data-blur="true"] {
+  filter: blur(6px);
+  transform: scale(1.04);
+}
+
+.mediaPlaceholder {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 180px;
+  min-height: 120px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+}
+
+.mediaIcon {
+  color: var(--ink-muted);
+}
+
+.mediaBadge {
+  position: absolute;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: calc(11.5px * var(--font-scale));
+}
+
+/* Voice */
+.voice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 190px;
+}
+
+.audio {
+  height: 34px;
+  max-width: 220px;
+}
+
+.voicePlay {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  color: inherit;
+  font-size: calc(13px * var(--font-scale));
+}
+
+.voiceLength {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--bubble-meta);
+}
+
+/* Composer */
+.composer {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: var(--bg-header);
+  border-top: 1px solid var(--border);
+  flex: none;
+}
+
+.composerError {
+  margin: 0;
+  padding: 7px 14px;
+  background: var(--danger);
+  color: #fff;
+  font-size: calc(12.5px * var(--font-scale));
+  flex: none;
+}
+
+.field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 22px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  max-height: 120px;
+  border: none;
+  outline: none;
+  background: none;
+  resize: none;
+  /* Under 16px iOS Safari zooms the page on focus regardless of the viewport
+     meta, so this floor is deliberate rather than a rounding of the scale. */
+  font-size: max(16px, calc(15px * var(--font-scale)));
+  line-height: 1.4;
+  padding: 5px 0;
+}
+
+.composerIcon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--ink-muted);
+  flex: none;
+}
+
+.composerIcon:hover {
+  background: var(--bg-hover);
+}
+
+.send {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.send:disabled {
+  opacity: 0.55;
+}
+
+.recording {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 22px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  font-size: calc(14px * var(--font-scale));
+}
+
+.recordingDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.recordCancel {
+  margin-left: auto;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: calc(13px * var(--font-scale));
+}
+
+/* Emoji */
+.emojiPanel {
+  flex: none;
+  max-height: 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+}
+
+.emojiTabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.emojiTab {
+  padding: 4px 8px;
+  border-radius: var(--radius-bubble);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.emojiTab[aria-current="true"] {
+  background: var(--accent-soft);
+}
+
+.emojiClose {
+  margin-left: auto;
+  padding: 4px 10px;
+  color: var(--ink-muted);
+}
+
+.emojiGrid {
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 2px;
+  padding: 8px;
+}
+
+.emoji {
+  aspect-ratio: 1;
+  font-size: 22px;
+  line-height: 1;
+  border-radius: var(--radius-bubble);
+}
+
+.emoji:hover {
+  background: var(--bg-hover);
+}
+
+/* States */
+.typing {
+  align-self: flex-start;
+  display: flex;
+  gap: 4px;
+  padding: 9px 12px;
+  border-radius: var(--radius-bubble);
+  background: var(--bubble-in);
+  box-shadow: var(--shadow-1);
+}
+
+.typingDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  animation: bounce 1.2s infinite;
+}
+
+.typingDot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typingDot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.empty {
+  position: relative;
+  align-self: center;
+  margin: auto 0;
+  padding: 10px 16px;
+  border-radius: var(--radius-bubble);
+  background: var(--bg-overlay);
+  color: #fff;
+  font-size: calc(12.5px * var(--font-scale));
+  text-align: center;
+  max-width: 320px;
+}
+
+.offline {
+  flex: none;
+  padding: 6px 14px;
+  background: var(--warn);
+  color: #111b21;
+  font-size: calc(12px * var(--font-scale));
+  text-align: center;
+}
