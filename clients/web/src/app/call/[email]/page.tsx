@@ -12,6 +12,7 @@ import { useSession } from "@/lib/auth/SessionProvider";
 import { CallEngine, type CallState } from "@/lib/call/engine";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { getGroup, isGroupId } from "@/lib/groups";
+import { finishCall, recordCallStarted } from "@/lib/call/call-log";
 
 function qualityName(q: ConnectionQuality): string {
   if (q === ConnectionQuality.Excellent) return "excellent";
@@ -44,6 +45,8 @@ export default function CallPage() {
   const [showSecurity, setShowSecurity] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [peerName, setPeerName] = useState(peerEmail);
+  const logIdRef = useRef<string | null>(null);
+  const connectedAtRef = useRef<number | null>(null);
 
   const [callees, setCallees] = useState<string[] | null>(null);
 
@@ -70,12 +73,28 @@ export default function CallPage() {
     if (callees === null) return;
     const engine = new CallEngine(session, deviceId(), setState);
     engineRef.current = engine;
+    const logId = recordCallStarted(peerEmail, true, withVideo);
+    logIdRef.current = logId;
     engine.start(callees, withVideo);
     return () => {
+      // Closing the record here rather than on hang-up covers navigating away
+      // and closing the tab too.
+      finishCall(
+        logId,
+        connectedAtRef.current ? "completed" : "failed",
+        connectedAtRef.current
+      );
       engine.dispose();
       engineRef.current = null;
     };
   }, [status, session, peerEmail, withVideo, callees]);
+
+  // The first time it actually connects is what the log's duration measures.
+  useEffect(() => {
+    if (state?.stage === "connected" && connectedAtRef.current === null) {
+      connectedAtRef.current = Date.now();
+    }
+  }, [state?.stage]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -195,6 +214,27 @@ export default function CallPage() {
             data-active={state?.dataSaver}
             aria-label={state?.dataSaver ? "Turn data saver off" : "Turn data saver on"}
             onClick={() => engineRef.current?.setDataSaver(!state?.dataSaver)}
+          >
+            <Icon name="image" size={20} />
+          </button>
+
+          {state?.canSwitchCamera && state?.cameraEnabled && (
+            <button
+              className={styles.control}
+              type="button"
+              aria-label="Switch camera"
+              onClick={() => engineRef.current?.switchCamera()}
+            >
+              <Icon name="video" size={20} />
+            </button>
+          )}
+
+          <button
+            className={styles.control}
+            type="button"
+            data-active={state?.screenSharing}
+            aria-label={state?.screenSharing ? "Stop sharing your screen" : "Share your screen"}
+            onClick={() => engineRef.current?.toggleScreenShare()}
           >
             <Icon name="image" size={20} />
           </button>

@@ -28,6 +28,7 @@ export interface ParticipantView {
   speaking: boolean;
   audioMuted: boolean;
   videoTrack: Track | null;
+  sharingScreen: boolean;
   connectionQuality: ConnectionQuality;
 }
 
@@ -47,6 +48,9 @@ export interface CallState {
    * comparing out of band. */
   safetyNumbers: Record<string, string>;
   quality: ConnectionQuality;
+  screenSharing: boolean;
+  /** Whether a second camera exists to switch to. */
+  canSwitchCamera: boolean;
   rejoinNeeded: boolean;
   encrypted: boolean;
   startedAtMs: number | null;
@@ -189,6 +193,8 @@ export class CallEngine {
     generation: -1,
     safetyNumbers: {},
     quality: ConnectionQuality.Unknown,
+    screenSharing: false,
+    canSwitchCamera: false,
     rejoinNeeded: false,
     encrypted: false,
     startedAtMs: null,
@@ -220,9 +226,16 @@ export class CallEngine {
     const room = this.room;
     if (!room) return;
     const build = (p: RemoteParticipant | Room["localParticipant"], isLocal: boolean): ParticipantView => {
-      const videoPub = [...p.trackPublications.values()].find(
-        (pub) => pub.kind === Track.Kind.Video && pub.source === Track.Source.Camera
-      );
+      // A screen share takes precedence over the camera: it is the thing the
+      // person is actively trying to show.
+      const publications = [...p.trackPublications.values()];
+      const videoPub =
+        publications.find(
+          (pub) => pub.kind === Track.Kind.Video && pub.source === Track.Source.ScreenShare
+        ) ??
+        publications.find(
+          (pub) => pub.kind === Track.Kind.Video && pub.source === Track.Source.Camera
+        );
       const audioPub = [...p.trackPublications.values()].find((pub) => pub.kind === Track.Kind.Audio);
       return {
         identity: p.identity,
@@ -231,6 +244,7 @@ export class CallEngine {
         speaking: p.isSpeaking,
         audioMuted: audioPub ? audioPub.isMuted : true,
         videoTrack: videoPub?.track ?? null,
+        sharingScreen: videoPub?.source === Track.Source.ScreenShare,
         connectionQuality: p.connectionQuality,
       };
     };
@@ -359,6 +373,40 @@ export class CallEngine {
 
     this.syncParticipants();
     this.startQualityReporting();
+    void this.refreshCameraCount();
+  }
+
+  /** Device labels are empty until a camera permission has been granted, but
+   * the count is available either way, which is all the toggle needs. */
+  private async refreshCameraCount(): Promise<void> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter((d) => d.kind === "videoinput");
+      this.patch({ canSwitchCamera: cameras.length > 1 });
+    } catch {
+      this.patch({ canSwitchCamera: false });
+    }
+  }
+
+  /** Screen share is published as a separate track source, so it appears
+   * alongside the camera rather than replacing it. */
+  async toggleScreenShare(): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    const next = !this.state.screenSharing;
+    try {
+      await room.localParticipant.setScreenShareEnabled(next, { audio: true });
+      this.patch({ screenSharing: next });
+    } catch (err) {
+      // The browser picker being dismissed throws; that is a cancel, not a
+      // failure worth showing.
+      if (err instanceof Error && /Permission denied|NotAllowedError|AbortError/i.test(err.name + err.message)) {
+        this.patch({ screenSharing: false });
+        return;
+      }
+      this.patch({ error: err instanceof Error ? err.message : "Couldn't share the screen." });
+    }
+    this.syncParticipants();
   }
 
   private async startE2ee(): Promise<boolean> {
