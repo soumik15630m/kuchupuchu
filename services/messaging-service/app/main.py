@@ -33,6 +33,7 @@ from app.media import prune_expired as prune_media
 from app.messages import prune_expired as prune_messages
 from app.routers import media as media_router
 from app.routers import messages as messages_router
+from app.routers import unfurl as unfurl_router
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ if _origins:
 
 app.include_router(messages_router.router)
 app.include_router(media_router.router, prefix="/media")
+app.include_router(unfurl_router.router, prefix="/unfurl")
 
 
 @app.get("/healthz")

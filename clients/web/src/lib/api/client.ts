@@ -341,6 +341,21 @@ export class Session {
     return this.msgAuthed(`/media/${encodeURIComponent(mediaId)}`);
   }
 
+  /** Link previews are fetched by our own server because no third party
+   * sends CORS headers for its HTML. Only the sender does this; the result
+   * is embedded in the encrypted envelope, so the recipient never contacts
+   * the site. */
+  unfurl(url: string): Promise<LinkPreviewResponse> {
+    return this.msgAuthed("/unfurl", { method: "POST", body: JSON.stringify({ url }) });
+  }
+
+  async unfurlImage(url: string): Promise<Blob> {
+    const bytes = await this.msgAuthed<ArrayBuffer>(
+      `/unfurl/image?u=${encodeURIComponent(url)}`
+    );
+    return new Blob([bytes]);
+  }
+
   /** The browser WebSocket API cannot set an Authorization header, so the
    * access token goes in the query string. It must be the short-lived access
    * token, never the refresh token — this lands in the server's access log. */
@@ -355,6 +370,14 @@ export class Session {
 
 /** A member of the allowlist. `email` is the account identifier the protocol
  * addresses by; `username` is the handle people actually use. */
+export interface LinkPreviewResponse {
+  url: string;
+  title: string | null;
+  description: string | null;
+  siteName: string | null;
+  imageUrl: string | null;
+}
+
 export interface Member {
   email: string;
   username: string | null;

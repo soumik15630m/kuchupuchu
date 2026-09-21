@@ -10,6 +10,7 @@ import {
   pendingOutbox,
   putMessage,
   recordReceipt,
+  type LinkPreview,
   type MediaRef,
   type ReplyRef,
   type StoredMessage,
@@ -57,6 +58,9 @@ interface Content {
   /** Set on `profile`: the sender's avatar. Carried here rather than in the
    * server-side profile because the ref includes the blob's decryption key. */
   avatar?: MediaRef | null;
+  /** Set on `text`: a preview the sender resolved, so the recipient never
+   * fetches the link themselves. */
+  link?: LinkPreview;
   sentAtMs: number;
 }
 
@@ -323,6 +327,7 @@ export class MessagingClient {
       replyTo: content.replyTo,
       location: content.location,
       contact: content.contact,
+      link: content.link,
       sentAtMs,
       status: "delivered",
     };
@@ -484,6 +489,7 @@ export class MessagingClient {
       replyTo: content.replyTo,
       location: content.location,
       contact: content.contact,
+      link: content.link,
       sentAtMs,
       status: "sending",
       recipients:

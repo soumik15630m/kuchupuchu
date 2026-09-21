@@ -13,3 +13,5 @@ export function normalizeHref(raw: string): string;
 export function parseMessage(body: string, mentionables?: Map<string, string>): Segment[];
 export function mentionedEmails(body: string, mentionables?: Map<string, string>): string[];
 export function plainText(body: string): string;
+
+export function firstLink(body: string): string | null;

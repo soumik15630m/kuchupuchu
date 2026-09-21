@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { FileAttachment } from "@/components/chat/FileAttachment";
 import { FormattedText } from "@/components/chat/FormattedText";
+import { LinkPreviewCard } from "@/components/chat/LinkPreviewCard";
 import { ContactCard, LocationCard } from "@/components/chat/LocationCard";
 import { VoicePlayer } from "@/components/chat/VoicePlayer";
 import { useSession } from "@/lib/auth/SessionProvider";
@@ -202,6 +203,7 @@ export function MessageBubble({
         {message.kind === "file" && <FileAttachment message={message} />}
         {message.kind === "location" && <LocationCard message={message} />}
         {message.kind === "contact" && <ContactCard message={message} />}
+        {message.link && !message.deletedForEveryone && <LinkPreviewCard preview={message.link} />}
         {message.body && (
           <span className={styles.body}>
             <FormattedText body={message.body} mentionables={mentionables} selfEmail={myEmail} />

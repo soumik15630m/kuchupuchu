@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { isSafeHref, mentionedEmails, parseMessage, plainText } from "../formatting.mjs";
+import { firstLink, isSafeHref, mentionedEmails, parseMessage, plainText } from "../formatting.mjs";
 
 const people = new Map([
   ["alice", "alice@example.com"],
@@ -114,4 +114,30 @@ test("plainText strips markers for previews and search", () => {
 
 test("a message with no body parses to nothing", () => {
   assert.deepEqual(parseMessage(""), []);
+});
+
+test("the first link in a body is the one previewed", () => {
+  assert.equal(
+    firstLink("see https://example.com/a and https://example.org/b"),
+    "https://example.com/a"
+  );
+});
+
+test("a bare www link is normalised before it is previewed", () => {
+  assert.equal(firstLink("try www.example.com/x"), "https://www.example.com/x");
+});
+
+test("a body with no link has nothing to preview", () => {
+  assert.equal(firstLink("just talking"), null);
+  assert.equal(firstLink(""), null);
+});
+
+test("a javascript: url is never previewed", () => {
+  // It is not a link segment in the first place, which is the whole point:
+  // the preview path and the render path agree on what a link is.
+  assert.equal(firstLink("javascript:alert(1)"), null);
+});
+
+test("a link inside formatting is still found", () => {
+  assert.equal(firstLink("*https://example.com/a*"), "https://example.com/a");
 });

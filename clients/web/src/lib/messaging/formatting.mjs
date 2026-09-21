@@ -135,3 +135,22 @@ function collectMentions(segment, found) {
 export function plainText(body) {
   return body.replace(/```|[*_~]/g, "");
 }
+
+/** The first previewable link in a body, already normalised to an absolute
+ * https URL. Only one preview is ever shown, so the rest are irrelevant —
+ * and resolving them all would mean one outbound fetch per link typed. */
+export function firstLink(body) {
+  if (!body) return null;
+  return findLink(parseMessage(body));
+}
+
+function findLink(segments) {
+  for (const segment of segments) {
+    if (segment.type === "link") return segment.href;
+    // Formatting wraps its contents in children, so a bolded link is nested
+    // rather than top-level -- exactly like mentions.
+    const nested = findLink(segment.children ?? []);
+    if (nested) return nested;
+  }
+  return null;
+}

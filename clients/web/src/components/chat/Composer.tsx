@@ -11,6 +11,11 @@ import { downloadGif, type Gif } from "@/lib/messaging/gifs";
 import type { Sticker } from "@/lib/messaging/stickers";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { compressImage, makeThumbnail, pickVoiceMimeType, videoPoster } from "@/lib/messaging/media";
+import { firstLink } from "@/lib/messaging/formatting.mjs";
+import { linkPreviewsEnabled, resolvePreview } from "@/lib/messaging/link-preview";
+import { LinkPreviewCard } from "@/components/chat/LinkPreviewCard";
+import type { LinkPreview } from "@/lib/messaging/store";
+import { useSession } from "@/lib/auth/SessionProvider";
 import { targetChatId, type ChatTarget } from "@/lib/messaging/client";
 import { settingsFor, updateChatSettings } from "@/lib/messaging/chat-settings";
 import type { ReplyRef, StoredMessage } from "@/lib/messaging/store";
@@ -40,6 +45,7 @@ export function Composer({
   onShareContact?: () => void;
 }) {
   const { client } = useMessaging();
+  const { session } = useSession();
   const chatId = targetChatId(target);
   const [draft, setDraft] = useState(() => settingsFor(chatId).draft ?? "");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -47,6 +53,10 @@ export function Composer({
   // Every picked or captured image passes through the editor first; sending
   // straight through would make crop and draw a separate, easily-missed path.
   const [editingPhoto, setEditingPhoto] = useState<File | null>(null);
+  // The resolved preview for whatever link is currently in the draft, plus
+  // the links the user dismissed so re-typing does not resurrect the card.
+  const [preview, setPreview] = useState<LinkPreview | null>(null);
+  const dismissedLinks = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showGifs, setShowGifs] = useState(false);
@@ -121,7 +131,11 @@ export function Composer({
     if (inputRef.current) inputRef.current.style.height = "auto";
     try {
       await client.sendTyping(target, true);
-      await client.send(target, { kind: "text", body, replyTo: quoted });
+      // The preview is matched against the body being sent, not whatever the
+      // draft became while the request was in flight.
+      const attached = preview && firstLink(body) === preview.url ? preview : undefined;
+      setPreview(null);
+      await client.send(target, { kind: "text", body, replyTo: quoted, link: attached });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't send that.");
     }
@@ -364,6 +378,35 @@ export function Composer({
     });
   }
 
+  // Debounced because it costs an outbound fetch from our own server: firing
+  // on every keystroke of a pasted URL would be a dozen requests for one link.
+  useEffect(() => {
+    if (!session || !linkPreviewsEnabled()) return;
+    const url = firstLink(draft);
+    if (!url || dismissedLinks.current.has(url)) {
+      setPreview(null);
+      return;
+    }
+    if (preview?.url === url) return;
+
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      resolvePreview(session, url)
+        .then((found) => {
+          if (!cancelled) setPreview(found);
+        })
+        .catch(() => {
+          // An unreachable or preview-less link is ordinary; the message
+          // sends without a card and the user is told nothing.
+          if (!cancelled) setPreview(null);
+        });
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, session, preview?.url]);
+
   return (
     <>
       {editingPhoto && (
@@ -384,6 +427,16 @@ export function Composer({
         <p className={styles.composerError} role="alert">
           {error}
         </p>
+      )}
+
+      {preview && (
+        <LinkPreviewCard
+          preview={preview}
+          onDismiss={() => {
+            dismissedLinks.current.add(preview.url);
+            setPreview(null);
+          }}
+        />
       )}
 
       {showGifs && (

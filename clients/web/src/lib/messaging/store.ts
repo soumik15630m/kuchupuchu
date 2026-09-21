@@ -28,6 +28,18 @@ export interface ReplyRef {
   fromEmail: string;
 }
 
+/** A link preview, resolved by the *sender* and carried inside the encrypted
+ * envelope. The recipient renders it without contacting the site, so opening a
+ * chat never tells a third party anything. `image` is a small inline data URL
+ * for the same reason — a remote <img src> would be a beacon. */
+export interface LinkPreview {
+  url: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  image?: string;
+}
+
 export interface StoredMessage {
   id: string;
   chatId: string;
@@ -39,6 +51,7 @@ export interface StoredMessage {
   replyTo?: ReplyRef;
   location?: { lat: number; lon: number; accuracyM?: number };
   contact?: { email: string; username: string | null; displayName: string | null };
+  link?: LinkPreview;
   sentAtMs: number;
   status: MessageStatus;
   /** Who this was addressed to, excluding the sender's own devices, captured

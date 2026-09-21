@@ -13,6 +13,7 @@ import {
   markUnlocked,
   setAutoLock,
 } from "@/lib/lock/app-lock";
+import { linkPreviewsEnabled, setLinkPreviewsEnabled } from "@/lib/messaging/link-preview";
 
 import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
@@ -27,11 +28,13 @@ export default function PrivacyPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [previews, setPreviews] = useState(true);
 
   useEffect(() => {
     setEnabled(isLockEnabled());
     const config = loadLock();
     if (config) setAutoLockMsState(config.autoLockMs);
+    setPreviews(linkPreviewsEnabled());
   }, []);
 
   async function turnOn() {
@@ -154,6 +157,40 @@ export default function PrivacyPage() {
               This hides the app behind a PIN. It does <strong>not</strong> encrypt your messages on
               this device — anyone with real access to this computer&apos;s profile can still read
               the stored data. Use your operating system&apos;s disk encryption for that.
+            </p>
+          </div>
+
+          <div className={settingsStyles.divider} />
+
+          <div className={themeStyles.section}>
+            <h2 className={themeStyles.sectionTitle}>Link previews</h2>
+            <div className={themeStyles.options} role="radiogroup" aria-label="Link previews">
+              {[
+                { label: "On", value: true },
+                { label: "Off", value: false },
+              ].map((option) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={previews === option.value}
+                  className={themeStyles.radio}
+                  onClick={() => {
+                    setPreviews(option.value);
+                    setLinkPreviewsEnabled(option.value);
+                    setSaved("Saved.");
+                  }}
+                >
+                  <span className={themeStyles.radioMark} />
+                  <span className={themeStyles.radioLabel}>{option.label}</span>
+                </button>
+              ))}
+            </div>
+            <p className={themeStyles.hint}>
+              To show a preview of a link you paste, your own server has to fetch that page — so it
+              learns the address, though nobody outside it does. Turning this off means no link you
+              type ever leaves this device. Previews you <em>receive</em> are unaffected: they
+              arrive inside the encrypted message and never contact the site.
             </p>
           </div>
 
