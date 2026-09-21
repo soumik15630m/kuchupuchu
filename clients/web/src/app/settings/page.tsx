@@ -101,6 +101,12 @@ export default function SettingsPage() {
           />
           <Row
             icon="shield"
+            label="Privacy"
+            note="App lock and sign-in"
+            onClick={() => router.push("/settings/privacy")}
+          />
+          <Row
+            icon="shield"
             label="Linked devices"
             note="Review and revoke your devices"
             onClick={() => router.push("/settings/devices")}

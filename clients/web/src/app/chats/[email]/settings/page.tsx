@@ -271,6 +271,19 @@ export default function ChatSettingsPage() {
 
           <div className={settingsStyles.divider} />
 
+          <button
+            type="button"
+            className={settingsStyles.row}
+            onClick={() => router.push(`/chats/${encodeURIComponent(email)}/media`)}
+          >
+            <span className={settingsStyles.rowBody}>
+              <span className={settingsStyles.rowLabel}>Media, links and docs</span>
+              <span className={settingsStyles.rowNote}>Everything shared in this chat</span>
+            </span>
+          </button>
+
+          <div className={settingsStyles.divider} />
+
           <div className={themeStyles.section}>
             <h2 className={themeStyles.sectionTitle}>Wallpaper for this chat</h2>
             <WallpaperPicker chatId={email} />
