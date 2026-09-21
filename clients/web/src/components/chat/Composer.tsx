@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { CameraSheet } from "@/components/chat/CameraSheet";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
+import { MediaEditor } from "@/components/chat/MediaEditor";
 import { GifStickerPicker } from "@/components/chat/GifStickerPicker";
 import { downloadGif, type Gif } from "@/lib/messaging/gifs";
 import type { Sticker } from "@/lib/messaging/stickers";
@@ -43,6 +44,9 @@ export function Composer({
   const [draft, setDraft] = useState(() => settingsFor(chatId).draft ?? "");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Every picked or captured image passes through the editor first; sending
+  // straight through would make crop and draw a separate, easily-missed path.
+  const [editingPhoto, setEditingPhoto] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showGifs, setShowGifs] = useState(false);
@@ -123,7 +127,7 @@ export function Composer({
     }
   }
 
-  async function sendAttachment(file: File) {
+  async function sendAttachment(file: File, captionOverride?: string) {
     if (!client) return;
     setBusy(true);
     setError(null);
@@ -152,7 +156,7 @@ export function Composer({
       }
 
       const quoted = replyRef();
-      const caption = draft.trim();
+      const caption = captionOverride ?? draft.trim();
       onReplyConsumed?.();
       setDraft("");
       updateChatSettings(chatId, { draft: "" });
@@ -362,6 +366,20 @@ export function Composer({
 
   return (
     <>
+      {editingPhoto && (
+        <MediaEditor
+          file={editingPhoto}
+          onCancel={() => setEditingPhoto(null)}
+          onDone={(blob, caption) => {
+            const edited = new File([blob], editingPhoto.name.replace(/\.[^.]+$/, "") + ".jpg", {
+              type: "image/jpeg",
+            });
+            setEditingPhoto(null);
+            void sendAttachment(edited, caption);
+          }}
+        />
+      )}
+
       {error && (
         <p className={styles.composerError} role="alert">
           {error}
@@ -472,7 +490,7 @@ export function Composer({
       {showCamera && (
         <CameraSheet
           onClose={() => setShowCamera(false)}
-          onCapture={(file) => void sendAttachment(file)}
+          onCapture={(file) => setEditingPhoto(file)}
         />
       )}
 
@@ -576,7 +594,9 @@ export function Composer({
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = "";
-          if (file) void sendAttachment(file);
+          if (!file) return;
+          if (file.type.startsWith("image/")) setEditingPhoto(file);
+          else void sendAttachment(file);
         }}
       />
     </>

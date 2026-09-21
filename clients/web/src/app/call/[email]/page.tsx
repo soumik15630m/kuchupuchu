@@ -11,9 +11,10 @@ import styles from "@/components/call/call.module.css";
 import { deviceId } from "@/lib/api/client";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { CallEngine, type CallState } from "@/lib/call/engine";
-import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
+import { useDirectory } from "@/lib/directory/DirectoryProvider";
 import { getGroup, isGroupId } from "@/lib/groups";
 import { finishCall, recordCallStarted } from "@/lib/call/call-log";
+import { pickPipParticipant, pipSupported } from "@/lib/call/pip.mjs";
 
 function qualityName(q: ConnectionQuality): string {
   if (q === ConnectionQuality.Excellent) return "excellent";
@@ -50,6 +51,49 @@ export default function CallPage() {
   const connectedAtRef = useRef<number | null>(null);
 
   const [callees, setCallees] = useState<string[] | null>(null);
+
+  // Picture-in-picture. The browser owns the window, so all this holds is
+  // which <video> is eligible; requesting it must happen inside the click,
+  // because Chrome requires a user gesture.
+  const pipTargets = useRef(new Map<string, HTMLVideoElement>());
+  const [pipActive, setPipActive] = useState(false);
+  const pipAvailable = pipSupported() && Boolean(pickPipParticipant(state?.participants ?? []));
+
+  const registerPipTarget = useCallback(
+    (identity: string) => (el: HTMLVideoElement | null) => {
+      if (el) pipTargets.current.set(identity, el);
+      else pipTargets.current.delete(identity);
+    },
+    []
+  );
+
+  const togglePip = useCallback(async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        return;
+      }
+      const target = pickPipParticipant(state?.participants ?? []);
+      const el = target ? pipTargets.current.get(target.identity) : null;
+      if (el) await el.requestPictureInPicture();
+    } catch {
+      // Denied by the browser or the element was not ready; the call itself
+      // is unaffected, so there is nothing to tell the user.
+    }
+  }, [state?.participants]);
+
+  // The window also closes from its own chrome, so the button tracks the
+  // document rather than assuming its own click is the only way out.
+  useEffect(() => {
+    const onEnter = () => setPipActive(true);
+    const onLeave = () => setPipActive(false);
+    document.addEventListener("enterpictureinpicture", onEnter, true);
+    document.addEventListener("leavepictureinpicture", onLeave, true);
+    return () => {
+      document.removeEventListener("enterpictureinpicture", onEnter, true);
+      document.removeEventListener("leavepictureinpicture", onLeave, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isGroupId(peerEmail)) {
@@ -181,7 +225,12 @@ export default function CallPage() {
       ) : (
         <div className={styles.grid} data-count={Math.min(ordered.length, 5)}>
           {ordered.map((p) => (
-            <VideoTile key={p.identity} participant={p} mirrored={p.isLocal && !p.sharingScreen} />
+            <VideoTile
+              key={p.identity}
+              participant={p}
+              mirrored={p.isLocal && !p.sharingScreen}
+              onVideoEl={registerPipTarget(p.identity)}
+            />
           ))}
         </div>
       )}
@@ -239,6 +288,18 @@ export default function CallPage() {
           >
             <Icon name="image" size={20} />
           </button>
+
+          {pipAvailable && (
+            <button
+              className={styles.control}
+              type="button"
+              data-active={pipActive}
+              aria-label={pipActive ? "Close the floating window" : "Open in a floating window"}
+              onClick={togglePip}
+            >
+              <Icon name="image" size={20} />
+            </button>
+          )}
 
           <button
             className={`${styles.control} ${styles.hangup}`}
