@@ -5,6 +5,7 @@ import { SessionManager, decodeContent, encodeContent, type MessageEnvelope } fr
 import {
   addSystemNotice,
   advanceStatus,
+  allMessages,
   deleteMessage,
   getMessage,
   pendingOutbox,
@@ -17,6 +18,13 @@ import {
 } from "./store";
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 import { deleteAvatar, putAvatar } from "../directory/avatar-store";
+
+/** A newly linked device asks its siblings for the archive exactly once;
+ * the device id is stored with the flag so a re-minted id asks again. */
+const HISTORY_ASKED_KEY = "kuchupuchu:history-asked";
+const HISTORY_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
+const HISTORY_MAX_MESSAGES = 2000;
+const HISTORY_BATCH = 40;
 
 /** The plaintext inside an envelope. Everything user-visible lives here; the
  * server sees only the sealed form.
@@ -40,7 +48,9 @@ interface Content {
     | "status-view"
     | "edit"
     | "group-update"
-    | "profile";
+    | "profile"
+    | "history-request"
+    | "history";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -61,6 +71,13 @@ interface Content {
   /** Set on `text`: a preview the sender resolved, so the recipient never
    * fetches the link themselves. */
   link?: LinkPreview;
+  /** Set on `history`: a batch of this account's own past messages, sent
+   * device-to-device when a new device is linked. The server stores these as
+   * ordinary ciphertext and learns nothing it did not already hold. */
+  history?: StoredMessage[];
+  /** Set on `history`: the groups those messages belong to, so a restored
+   * chat list has names rather than bare ids. */
+  historyGroups?: GroupRef[];
   sentAtMs: number;
 }
 
@@ -150,6 +167,7 @@ export class MessagingClient {
     // The socket delivers its own backlog on open, but a send that happened
     // while this client was entirely offline is only in /pending.
     await this.drainPending();
+    await this.requestHistoryIfNew();
   }
 
   stop(): void {
@@ -286,9 +304,11 @@ export class MessagingClient {
       content.kind === "status-view" ||
       content.kind === "edit" ||
       content.kind === "group-update" ||
-      content.kind === "profile"
+      content.kind === "profile" ||
+      content.kind === "history-request" ||
+      content.kind === "history"
     ) {
-      await this.applyControl(content, wire.from_email);
+      await this.applyControl(content, wire.from_email, wire.from_device);
       await this.acknowledge(wire.id);
       return;
     }
@@ -336,7 +356,35 @@ export class MessagingClient {
     await this.acknowledge(wire.id);
   }
 
-  private async applyControl(content: Content, fromEmail: string): Promise<void> {
+  private async applyControl(
+    content: Content,
+    fromEmail: string,
+    fromDevice: string
+  ): Promise<void> {
+    // History only ever moves between this account's own devices. A request
+    // from anyone else is dropped rather than answered -- it would be a
+    // request to hand a member's whole archive to someone who asked nicely.
+    if (content.kind === "history-request") {
+      if (fromEmail.toLowerCase() !== this.api.email.toLowerCase()) return;
+      await this.sendHistoryTo(fromDevice);
+      return;
+    }
+
+    if (content.kind === "history") {
+      if (fromEmail.toLowerCase() !== this.api.email.toLowerCase()) return;
+      for (const ref of content.historyGroups ?? []) upsertFromRef(ref, this.api.email);
+      let added = 0;
+      for (const message of content.history ?? []) {
+        // A message this device already has wins: its read state and local
+        // stars are newer than whatever the sending device remembers.
+        if (await getMessage(message.id)) continue;
+        await putMessage(message);
+        added += 1;
+      }
+      if (added > 0) this.events.onOutboxDrained(added);
+      return;
+    }
+
     if (content.kind === "profile") {
       if (content.avatar) {
         await putAvatar({ email: fromEmail, media: content.avatar, updatedAtMs: content.sentAtMs });
@@ -417,6 +465,84 @@ export class MessagingClient {
       await this.api.ackDelivered([serverId]);
     } catch {
       // Redelivered on the next connect, which is the point of the queue.
+    }
+  }
+
+/** Newly linked devices start empty. Rather than leaving someone with a
+   * blank app, this asks the account's *other* devices for the archive; they
+   * answer over the same pairwise encrypted channel every message uses, so
+   * the server carries it without being able to read it. */
+  private async requestHistoryIfNew(): Promise<void> {
+    if (localStorage.getItem(HISTORY_ASKED_KEY) === this.deviceId) return;
+    const existing = await allMessages();
+    // Only a genuinely empty device asks. Re-asking after a chat is cleared
+    // would quietly undo the clearing.
+    if (existing.length > 0) {
+      localStorage.setItem(HISTORY_ASKED_KEY, this.deviceId);
+      return;
+    }
+    try {
+      const targets = await this.fanoutTargets(
+        [],
+        encodeContent({ kind: "history-request", body: "", sentAtMs: Date.now() })
+      );
+      if (targets.length === 0) return;
+      await this.api.sendMessage({
+        client_msg_id: crypto.randomUUID(),
+        kind: "text",
+        recipients: targets,
+      });
+      localStorage.setItem(HISTORY_ASKED_KEY, this.deviceId);
+    } catch {
+      // Retried on the next start; there is nothing useful to show for it.
+    }
+  }
+
+  /** Answers a history request from one of this account's own devices.
+   *
+   * Sent in batches because a single envelope carrying thousands of messages
+   * would exceed what the transport will take, and a partial transfer is far
+   * better than one that fails whole. */
+  private async sendHistoryTo(deviceId: string): Promise<void> {
+    if (deviceId === this.deviceId) return;
+    const all = await allMessages();
+    const recent = all
+      .filter((m) => m.sentAtMs >= Date.now() - HISTORY_WINDOW_MS)
+      .sort((a, b) => a.sentAtMs - b.sentAtMs)
+      .slice(-HISTORY_MAX_MESSAGES);
+    if (recent.length === 0) return;
+
+    const groups = loadGroups().map(toRef);
+
+    for (let i = 0; i < recent.length; i += HISTORY_BATCH) {
+      const batch = recent.slice(i, i + HISTORY_BATCH);
+      const content: Content = {
+        kind: "history",
+        body: "",
+        history: batch,
+        // The group list rides with the first batch only; repeating it in
+        // every one would multiply it by the batch count for no gain.
+        historyGroups: i === 0 ? groups : undefined,
+        sentAtMs: Date.now(),
+      };
+      try {
+        const envelope = await this.sessions.encrypt(
+          this.api.email,
+          deviceId,
+          encodeContent(content)
+        );
+        await this.api.sendMessage({
+          client_msg_id: crypto.randomUUID(),
+          kind: "text",
+          recipients: [
+            { email: this.api.email, device_id: deviceId, envelope: JSON.stringify(envelope) },
+          ],
+        });
+      } catch {
+        // Stop at the first failure: the ratchet is ordered, so pushing on
+        // would leave the receiver unable to decrypt what follows anyway.
+        return;
+      }
     }
   }
 
