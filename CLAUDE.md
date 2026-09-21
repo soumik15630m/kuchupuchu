@@ -47,7 +47,11 @@ AUTH_BASE=http://127.0.0.1:8080 MSG_BASE=http://127.0.0.1:8090   AUTH_LOG=/tmp/k
 ```
 
 §4 caps a member at 2 active devices, so the suite uses stable device ids
-rather than minting one per run.
+rather than minting one per run, and revokes its throwaway device at the end.
+It signs in 3 times per run against a database-backed limit of 5 OTPs per hour
+per email, so roughly two back-to-back runs fit before you have to wait or
+clear `otp_codes` in the dev database. auth-service must run unbuffered
+(`python -u`) or its console OTP lines never reach the log.
 
 ## Bringing the stack up
 

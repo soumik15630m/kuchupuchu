@@ -26,12 +26,55 @@ const AUTH_LOG = process.env.AUTH_LOG ?? "/tmp/kp3/auth.log";
 const ALICE = process.env.E2E_ALICE ?? "alice@example.com";
 const BOB = process.env.E2E_BOB ?? "bob@example.com";
 
-/** Latest OTP the console transport printed for `email`. */
-function latestOtp(email) {
+/** alice, bob, and the throwaway device the revocation test registers. */
+const SIGN_INS_PER_RUN = 3;
+
+/** Codes this run has already spent, so a stale one is never re-submitted. */
+const usedCodes = new Set();
+
+/** The newest OTP the console transport printed for `email`.
+ *
+ * `/otp/request` answers 202 even when the per-email limit (5/hour) is hit —
+ * deliberately, so it cannot be used to confirm who is on the allowlist. A
+ * rate-limited run therefore produces no new log line, and re-submitting the
+ * previous code surfaces as a baffling 401 on verify. Catching it here turns
+ * that into something actionable.
+ */
+async function freshOtp(email, timeoutMs = 5000) {
+  // Polled rather than slept on: the service writes the line when it gets
+  // round to it, and a fixed delay is either flaky or needlessly slow.
+  const deadline = Date.now() + timeoutMs;
+  let code = null;
+  while (Date.now() < deadline) {
+    code = readLatestCode(email);
+    if (code && !usedCodes.has(code)) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  if (!code) {
+    throw new Error(
+      `No OTP for ${email} reached ${AUTH_LOG}. Either auth-service is not running with ` +
+        `OTP_TRANSPORT=console and unbuffered stdout (python -u), or no code was issued. ` +
+        `The per-email OTP limit is 5 per hour and it is stored in the database, so restarting the service does not clear it. This suite signs in ${SIGN_INS_PER_RUN} times per run. Wait out the hour, or clear the otp_codes table in the dev database.`
+    );
+  }
+  if (usedCodes.has(code)) {
+    throw new Error(
+      `No new OTP was issued for ${email} — /otp/request answers 202 even when limited, ` +
+        `so this is silent. The per-email OTP limit is 5 per hour and it is stored in the database, so restarting the service does not clear it. This suite signs in ${SIGN_INS_PER_RUN} times per run. Wait out the hour, or clear the otp_codes table in the dev database.`
+    );
+  }
+  usedCodes.add(code);
+  return code;
+}
+
+/** Just reads; freshOtp owns the retry and the error messaging. */
+function readLatestCode(email) {
   const log = readFileSync(AUTH_LOG, "utf8");
+  // Double-escaped on purpose: inside a template literal `\[` collapses to a
+  // bare `[`, which would make this a character class instead of a literal.
   const matches = [...log.matchAll(new RegExp(`\\[otp\\] ${email} -> (\\d{6})`, "g"))];
-  if (matches.length === 0) throw new Error(`no OTP for ${email} in ${AUTH_LOG}`);
-  return matches[matches.length - 1][1];
+  return matches.length ? matches[matches.length - 1][1] : null;
 }
 
 async function json(res) {
@@ -56,15 +99,11 @@ async function signIn(email, slot = "a") {
   });
   assert.equal(requested.status, 202, "OTP request should be accepted");
 
-  // The console transport writes synchronously, but the request returns before
-  // the log line is necessarily flushed.
-  await new Promise((r) => setTimeout(r, 300));
-
   const verified = await json(
     await fetch(`${AUTH}/otp/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email, code: latestOtp(email), deviceId, platform: "web" }),
+      body: JSON.stringify({ email, code: await freshOtp(email), deviceId, platform: "web" }),
     })
   );
   if (verified.status === 403 && String(verified.body?.detail ?? "").includes("active devices")) {
@@ -347,9 +386,10 @@ test("media uploads, downloads for its audience, and 404s for everyone else", as
 });
 
 test("a revoked device loses access to both services immediately", async () => {
-  // The second slot, so revoking it does not knock out the session the rest of
-  // the suite is using.
-  const victim = await signIn(BOB, "b");
+  // A throwaway id, not a stable one: a revoked device id can never be
+  // registered again, so reusing it would fail every run after the first.
+  // Revoking it at the end frees the slot, keeping the suite idempotent.
+  const victim = await signIn(BOB, `throwaway-${randomUUID().slice(0, 8)}`);
 
   // Revoking from the member's other device, which is the supported path.
   const revoked = await fetch(`${AUTH}/devices/${encodeURIComponent(victim.deviceId)}/revoke`, {
