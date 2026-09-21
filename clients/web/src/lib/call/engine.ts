@@ -647,6 +647,17 @@ export class CallEngine {
       el.style.display = "none";
       container.appendChild(el);
     };
+
+    // LiveKit auto-subscribes during connect(), so by the time the UI mounts
+    // this, the other party's audio is usually ALREADY subscribed and would
+    // never fire the event below -- whoever joined second would hear nothing.
+    for (const participant of room.remoteParticipants.values()) {
+      for (const publication of participant.trackPublications.values()) {
+        if (publication.kind === Track.Kind.Audio && publication.track) {
+          onSubscribed(publication.track as RemoteTrack);
+        }
+      }
+    }
     const onUnsubscribed = (track: RemoteTrack) => {
       if (track.kind === Track.Kind.Audio) track.detach().forEach((el) => el.remove());
     };
@@ -655,6 +666,7 @@ export class CallEngine {
     return () => {
       room.off(RoomEvent.TrackSubscribed, onSubscribed);
       room.off(RoomEvent.TrackUnsubscribed, onUnsubscribed);
+      container.replaceChildren();
     };
   }
 }

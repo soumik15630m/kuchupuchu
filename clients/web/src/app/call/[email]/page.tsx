@@ -180,7 +180,7 @@ export default function CallPage() {
       ) : (
         <div className={styles.grid} data-count={Math.min(ordered.length, 5)}>
           {ordered.map((p) => (
-            <VideoTile key={p.identity} participant={p} mirrored={p.isLocal} />
+            <VideoTile key={p.identity} participant={p} mirrored={p.isLocal && !p.sharingScreen} />
           ))}
         </div>
       )}
