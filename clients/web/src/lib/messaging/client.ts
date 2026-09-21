@@ -1,10 +1,12 @@
 import type { Session, WireMessage } from "../api/client";
-import { toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
+import { getGroup, isGroupId, toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
 import { decryptBlob } from "./media";
 import { SessionManager, decodeContent, encodeContent, type MessageEnvelope } from "./sessions";
 import {
   advanceStatus,
+  deleteMessage,
   getMessage,
+  pendingOutbox,
   putMessage,
   recordReceipt,
   type MediaRef,
@@ -21,7 +23,16 @@ import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-s
  * message. They travel the same encrypted path as everything else, so the
  * server cannot tell them apart from an ordinary message. */
 interface Content {
-  kind: "text" | "media" | "voice" | "sticker" | "status" | "reaction" | "deletion" | "status-view";
+  kind:
+    | "text"
+    | "media"
+    | "voice"
+    | "sticker"
+    | "status"
+    | "reaction"
+    | "deletion"
+    | "status-view"
+    | "edit";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -39,6 +50,13 @@ interface Content {
 export type ChatTarget =
   | { kind: "direct"; email: string }
   | { kind: "group"; group: Group };
+
+/** Resolves a stored group id back into a send target, or null if this device
+ * no longer knows the group. */
+function groupTarget(chatId: string): ChatTarget | null {
+  const group = getGroup(chatId);
+  return group ? { kind: "group", group } : null;
+}
 
 export function targetChatId(target: ChatTarget): string {
   return target.kind === "direct" ? target.email : target.group.id;
@@ -59,6 +77,8 @@ export interface MessagingEvents {
   onConnectionChange: (online: boolean) => void;
   /** A status post arrived, was published, or gained a viewer. */
   onStatusPost: () => void;
+  /** Queued messages went out after a reconnect. */
+  onOutboxDrained: (count: number) => void;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -115,6 +135,11 @@ export class MessagingClient {
     socket.onopen = () => {
       this.reconnectAttempt = 0;
       this.events.onConnectionChange(true);
+      // Anything typed while offline is owed to the server; without this it
+      // sits behind a red exclamation mark until the user notices it.
+      void this.retryOutbox().then((sent) => {
+        if (sent > 0) this.events.onOutboxDrained(sent);
+      });
     };
     socket.onclose = () => {
       this.events.onConnectionChange(false);
@@ -214,7 +239,12 @@ export class MessagingClient {
       return;
     }
 
-    if (content.kind === "reaction" || content.kind === "deletion" || content.kind === "status-view") {
+    if (
+      content.kind === "reaction" ||
+      content.kind === "deletion" ||
+      content.kind === "status-view" ||
+      content.kind === "edit"
+    ) {
       await this.applyControl(content, wire.from_email);
       await this.acknowledge(wire.id);
       return;
@@ -273,6 +303,19 @@ export class MessagingClient {
     // The control can outrun its target across a reconnect, or refer to a
     // message this device cleared. Dropping it is correct either way.
     if (!target) return;
+
+    if (content.kind === "edit") {
+      // Only the author may rewrite their own message.
+      if (target.fromEmail !== fromEmail) return;
+      const edited: StoredMessage = {
+        ...target,
+        body: content.body,
+        editedAtMs: content.sentAtMs,
+      };
+      await putMessage(edited);
+      this.events.onStatus(edited);
+      return;
+    }
 
     if (content.kind === "deletion") {
       // Only the author may retract. Without this check a peer could blank
@@ -358,7 +401,10 @@ export class MessagingClient {
     const clientMsgId = crypto.randomUUID();
     const sentAtMs = content.sentAtMs ?? Date.now();
     const isControl =
-      content.kind === "reaction" || content.kind === "deletion" || content.kind === "status-view";
+      content.kind === "reaction" ||
+      content.kind === "deletion" ||
+      content.kind === "status-view" ||
+      content.kind === "edit";
     const chatId = targetChatId(target);
 
     const body: Content = {
@@ -564,6 +610,71 @@ export class MessagingClient {
         );
       }
     }
+  }
+
+  /** Rewrites a message the local user sent, on both ends. */
+  async edit(chat: ChatTarget, targetId: string, body: string): Promise<void> {
+    const message = await getMessage(targetId);
+    if (!message || !message.outgoing || message.deletedForEveryone) return;
+
+    const editedAtMs = Date.now();
+    const updated: StoredMessage = { ...message, body, editedAtMs };
+    await putMessage(updated);
+    this.events.onStatus(updated);
+
+    await this.send(chat, { kind: "edit", body, target: targetId, sentAtMs: editedAtMs });
+  }
+
+  /** Sends an existing message on to another chat.
+   *
+   * Media is re-referenced rather than re-uploaded, but the blob's audience is
+   * fixed at upload time, so the new recipients would get a 404. Re-uploading
+   * under the new audience is what makes a forwarded attachment actually
+   * openable. */
+  async forward(chat: ChatTarget, message: StoredMessage, audience: string[]): Promise<void> {
+    if (message.deletedForEveryone) return;
+
+    if (!message.media) {
+      await this.send(chat, { kind: "text", body: message.body });
+      return;
+    }
+
+    const blob = await this.fetchMedia(message.media);
+    const { mediaId, key, iv } = await this.uploadMedia(audience, blob);
+    await this.send(chat, {
+      kind: message.kind === "voice" ? "voice" : message.kind === "sticker" ? "sticker" : "media",
+      body: message.body,
+      media: { ...message.media, mediaId, key, iv },
+    });
+  }
+
+  /** Re-sends anything that failed. Called on reconnect, so a message typed
+   * offline is not silently lost behind a red exclamation mark. */
+  async retryOutbox(): Promise<number> {
+    const stuck = await pendingOutbox();
+    let sent = 0;
+    for (const message of stuck) {
+      // Media would need its blob re-uploaded, which the original File is gone
+      // for; only text can be replayed safely from stored state.
+      if (message.kind !== "text" || !message.body) continue;
+
+      const chat: ChatTarget | null = message.recipients?.length
+        ? isGroupId(message.chatId)
+          ? groupTarget(message.chatId)
+          : { kind: "direct", email: message.chatId }
+        : null;
+      if (!chat) continue;
+
+      try {
+        await this.send(chat, { kind: "text", body: message.body, sentAtMs: message.sentAtMs });
+        await deleteMessage(message.id);
+        sent += 1;
+      } catch {
+        // Still unreachable; it stays in the outbox for the next attempt.
+        break;
+      }
+    }
+    return sent;
   }
 
   async fetchMedia(media: MediaRef): Promise<Blob> {

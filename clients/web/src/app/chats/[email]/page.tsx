@@ -1,10 +1,11 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
 import { Composer } from "@/components/chat/Composer";
+import { ForwardSheet } from "@/components/chat/ForwardSheet";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import styles from "@/components/chat/chat.module.css";
 import { AppShell } from "@/components/shell/AppShell";
@@ -13,7 +14,7 @@ import { useDirectory } from "@/lib/directory/DirectoryProvider";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
-import { messagesFor, type StoredMessage } from "@/lib/messaging/store";
+import { deleteMessage, messagesFor, setStarred, type StoredMessage } from "@/lib/messaging/store";
 import { wallpaperStyle } from "@/lib/theme/apply";
 import { useTheme } from "@/lib/theme/ThemeProvider";
 import { getWallpaper } from "@/lib/theme/wallpaper-store";
@@ -35,15 +36,27 @@ export default function ChatPage() {
   const router = useRouter();
   const email = decodeURIComponent(params.email);
   const { wallpaperFor } = useTheme();
-  const { nameFor } = useDirectory();
-  const { client, revision, typing: typingState, online, ready } = useMessaging();
+  const { nameFor, members } = useDirectory();
+  const { client, revision, typing: typingState, online, ready, refreshChats } = useMessaging();
 
   const chat = useChatTarget(email, revision);
   const name = chat.title;
   const [messages, setMessages] = useState<StoredMessage[]>([]);
   const [imageUrl, setImageUrl] = useState<string | undefined>();
   const [replyTo, setReplyTo] = useState<StoredMessage | null>(null);
+  const [editing, setEditing] = useState<StoredMessage | null>(null);
+  const [forwarding, setForwarding] = useState<StoredMessage | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Only people actually in this conversation can be mentioned.
+  const mentionables = useMemo(() => {
+    const scope = chat.group ? new Set(chat.group.members) : new Set([email]);
+    const map = new Map<string, string>();
+    for (const member of members) {
+      if (member.username && scope.has(member.email)) map.set(member.username.toLowerCase(), member.email);
+    }
+    return map;
+  }, [members, chat.group, email]);
 
   const wp = wallpaperFor(email);
   const typing = typistsIn(typingState, email, Date.now());
@@ -156,9 +169,21 @@ export default function ChatPage() {
                     {separator && <span className={styles.daySeparator}>{separator}</span>}
                     <MessageBubble
                       message={message}
+                      mentionables={mentionables}
                       onReply={setReplyTo}
                       onReact={(msg, emoji) => chat.target && void client?.react(chat.target, msg.id, emoji)}
                       onDelete={(msg) => chat.target && void client?.deleteForEveryone(chat.target, msg.id)}
+                      onDeleteForMe={async (msg) => {
+                        await deleteMessage(msg.id);
+                        refreshChats();
+                        setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                      }}
+                      onEdit={setEditing}
+                      onForward={setForwarding}
+                      onStar={async (msg) => {
+                        const updated = await setStarred(msg.id, !msg.starred);
+                        if (updated) setMessages((prev) => prev.map((m) => (m.id === msg.id ? updated : m)));
+                      }}
                     />
                   </div>
                 );
@@ -203,11 +228,32 @@ export default function ChatPage() {
               audience={chat.audience}
               replyTo={replyTo}
               onReplyConsumed={() => setReplyTo(null)}
+              editing={editing}
+              onEditDone={() => setEditing(null)}
+              mentionables={mentionables}
             />
           ) : (
             <p className={styles.composerError}>This group is no longer on this device.</p>
           )}
         </div>
+
+        {forwarding && (
+          <ForwardSheet
+            message={forwarding}
+            onClose={() => setForwarding(null)}
+            onPick={async (target, audience) => {
+              const message = forwarding;
+              setForwarding(null);
+              try {
+                await client?.forward(target, message, audience);
+                refreshChats();
+              } catch {
+                // Surfaced by the destination chat showing nothing new; a
+                // failed forward leaves the original untouched.
+              }
+            }}
+          />
+        )}
       </Pane>
     </AppShell>
   );

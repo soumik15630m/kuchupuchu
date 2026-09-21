@@ -81,6 +81,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       },
       onStatus: bump,
       onStatusPost: refreshStatuses,
+      onOutboxDrained: bump,
       onConnectionChange: setOnline,
       onTyping: (event) => setTyping((prev) => applyTyping(prev, event, Date.now())),
     });

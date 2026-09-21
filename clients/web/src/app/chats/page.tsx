@@ -9,7 +9,14 @@ import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { isGroupId, loadGroups, type Group } from "@/lib/groups";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
-import type { StoredMessage } from "@/lib/messaging/store";
+import { searchMessages, searchableText, type SearchHit, type StoredMessage } from "@/lib/messaging/store";
+import {
+  isMuted,
+  loadChatSettings,
+  MUTE_DURATIONS,
+  updateChatSettings,
+  type ChatSettings,
+} from "@/lib/messaging/chat-settings";
 
 import styles from "./chats.module.css";
 
@@ -40,8 +47,40 @@ export default function ChatsPage() {
   const { others, nameFor } = useDirectory();
   const [groups, setGroups] = useState<Group[]>([]);
   const [query, setQuery] = useState("");
+  const [settings, setSettings] = useState<Record<string, ChatSettings>>({});
+  const [showArchived, setShowArchived] = useState(false);
+  const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
-  useEffect(() => setGroups(loadGroups()), [chats]);
+  useEffect(() => {
+    setGroups(loadGroups());
+    setSettings(loadChatSettings());
+  }, [chats]);
+
+  // Searching message bodies is a separate pass from filtering the chat list:
+  // the list matches names, this matches history.
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) {
+      setHits(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      searchMessages(term).then((found) => {
+        if (!cancelled) setHits(found);
+      });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [query]);
+
+  function patch(chatId: string, next: ChatSettings) {
+    setSettings(updateChatSettings(chatId, next));
+    setMenuFor(null);
+  }
 
   const rows = useMemo(() => {
     type Row = { email: string; name: string; group: boolean; summary: ReturnType<typeof chats.get> };
@@ -79,11 +118,15 @@ export default function ChatsPage() {
     }
 
     const all = [...byEmail.values()].sort((a, b) => {
+      // Pinned chats stay on top regardless of recency; that is the whole point.
+      const ap = settings[a.email]?.pinned ? 1 : 0;
+      const bp = settings[b.email]?.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
       const at = a.summary?.lastMessage?.sentAtMs ?? 0;
       const bt = b.summary?.lastMessage?.sentAtMs ?? 0;
       if (at !== bt) return bt - at;
       return a.name.localeCompare(b.name);
-    });
+    }).filter((row) => Boolean(settings[row.email]?.archived) === showArchived);
 
     const q = query.trim().toLowerCase();
     if (!q) return all;
@@ -93,7 +136,7 @@ export default function ChatsPage() {
         r.email.includes(q) ||
         (r.summary?.lastMessage?.body ?? "").toLowerCase().includes(q)
     );
-  }, [others, groups, chats, query, nameFor]);
+  }, [others, groups, chats, query, nameFor, settings, showArchived]);
 
   return (
     <AppShell detail={<PaneEmpty>Pick a chat to start reading.</PaneEmpty>}>
@@ -113,16 +156,55 @@ export default function ChatsPage() {
 
         {ready && !online && <p className={styles.banner}>Reconnecting to the messaging service…</p>}
 
+        {hits === null && (
+          <button
+            type="button"
+            className={styles.archivedToggle}
+            onClick={() => setShowArchived((v) => !v)}
+          >
+            {showArchived ? "← Back to chats" : "Archived"}
+          </button>
+        )}
+
         <div className={styles.fabWrap}>
           <PaneScroll>
-            {rows.length === 0 && (
+            {hits !== null && (
+              <>
+                <div className={styles.sectionLabel}>
+                  {hits.length} message{hits.length === 1 ? "" : "s"}
+                </div>
+                {hits.map((hit) => (
+                  <button
+                    key={hit.message.id}
+                    type="button"
+                    className={styles.item}
+                    onClick={() => router.push(`/chats/${encodeURIComponent(hit.chatId)}`)}
+                  >
+                    <span className={styles.avatar}>
+                      {initialsFor(isGroupId(hit.chatId) ? "Group" : nameFor(hit.chatId))}
+                    </span>
+                    <span className={styles.itemBody}>
+                      <span className={styles.itemTop}>
+                        <span className={styles.itemName}>
+                          {isGroupId(hit.chatId) ? "Group" : nameFor(hit.chatId)}
+                        </span>
+                        <span className={styles.itemTime}>{timeLabel(hit.message.sentAtMs)}</span>
+                      </span>
+                      <span className={styles.itemPreview}>{searchableText(hit.message)}</span>
+                    </span>
+                  </button>
+                ))}
+              </>
+            )}
+
+            {rows.length === 0 && hits === null && (
               <PaneEmpty>
-                {query.trim() ? "No matches." : "No chats yet. Start one to begin."}
+                {showArchived ? "Nothing archived." : "No chats yet. Start one to begin."}
               </PaneEmpty>
             )}
-            {rows.map((row) => (
+            {hits === null && rows.map((row) => (
+              <div key={row.email} className={styles.itemRow}>
               <button
-                key={row.email}
                 type="button"
                 className={styles.item}
                 onClick={() => router.push(`/chats/${encodeURIComponent(row.email)}`)}
@@ -136,13 +218,80 @@ export default function ChatsPage() {
                     )}
                   </span>
                   <span className={styles.itemBottom}>
-                    <span className={styles.itemPreview}>{preview(row.summary?.lastMessage ?? null)}</span>
-                    {(row.summary?.unread ?? 0) > 0 && (
+                    <span className={styles.itemPreview}>
+                      {settings[row.email]?.draft
+                        ? `Draft: ${settings[row.email].draft}`
+                        : preview(row.summary?.lastMessage ?? null)}
+                    </span>
+                    {settings[row.email]?.pinned && <Icon name="check" size={13} />}
+                    {isMuted(settings[row.email] ?? {}) && <Icon name="micOff" size={13} />}
+                    {(row.summary?.unread ?? 0) > 0 && !isMuted(settings[row.email] ?? {}) && (
                       <span className={styles.unread}>{row.summary!.unread}</span>
                     )}
                   </span>
                 </span>
               </button>
+
+              <button
+                type="button"
+                className={styles.itemMenuButton}
+                aria-label={`Options for ${row.name}`}
+                onClick={() => setMenuFor(menuFor === row.email ? null : row.email)}
+              >
+                <Icon name="chevron" size={16} />
+              </button>
+
+              {menuFor === row.email && (
+                <>
+                  <button
+                    type="button"
+                    className={styles.menuBackdrop}
+                    aria-label="Close menu"
+                    onClick={() => setMenuFor(null)}
+                  />
+                  <div className={styles.itemMenu} role="menu">
+                    <button
+                      type="button"
+                      className={styles.itemMenuItem}
+                      onClick={() => patch(row.email, { pinned: !settings[row.email]?.pinned })}
+                    >
+                      {settings[row.email]?.pinned ? "Unpin" : "Pin"}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.itemMenuItem}
+                      onClick={() => patch(row.email, { archived: !settings[row.email]?.archived })}
+                    >
+                      {settings[row.email]?.archived ? "Unarchive" : "Archive"}
+                    </button>
+                    {isMuted(settings[row.email] ?? {}) ? (
+                      <button
+                        type="button"
+                        className={styles.itemMenuItem}
+                        onClick={() => patch(row.email, { mutedUntilMs: 0 })}
+                      >
+                        Unmute
+                      </button>
+                    ) : (
+                      MUTE_DURATIONS.map((d) => (
+                        <button
+                          key={d.label}
+                          type="button"
+                          className={styles.itemMenuItem}
+                          onClick={() =>
+                            patch(row.email, {
+                              mutedUntilMs: d.ms === Infinity ? Infinity : Date.now() + d.ms,
+                            })
+                          }
+                        >
+                          Mute {d.label}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+              </div>
             ))}
           </PaneScroll>
 

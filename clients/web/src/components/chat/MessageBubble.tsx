@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
+import { FormattedText } from "@/components/chat/FormattedText";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import type { StoredMessage } from "@/lib/messaging/store";
@@ -123,14 +124,24 @@ const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 export function MessageBubble({
   message,
+  mentionables,
   onReply,
   onReact,
   onDelete,
+  onDeleteForMe,
+  onEdit,
+  onForward,
+  onStar,
 }: {
   message: StoredMessage;
+  mentionables?: Map<string, string>;
   onReply?: (message: StoredMessage) => void;
   onReact?: (message: StoredMessage, emoji: string) => void;
   onDelete?: (message: StoredMessage) => void;
+  onDeleteForMe?: (message: StoredMessage) => void;
+  onEdit?: (message: StoredMessage) => void;
+  onForward?: (message: StoredMessage) => void;
+  onStar?: (message: StoredMessage) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { email: myEmail } = useSession();
@@ -172,9 +183,15 @@ export function MessageBubble({
           <MediaAttachment message={message} />
         )}
         {message.kind === "voice" && <VoiceNote message={message} />}
-        {message.body && <span className={styles.body}>{message.body}</span>}
+        {message.body && (
+          <span className={styles.body}>
+            <FormattedText body={message.body} mentionables={mentionables} selfEmail={myEmail} />
+          </span>
+        )}
 
         <span className={styles.meta}>
+          {message.starred && <Icon name="check" size={11} />}
+          {message.editedAtMs && <span className={styles.edited}>edited</span>}
           {formatTime(message.sentAtMs)}
           {message.outgoing && <Ticks status={message.status} />}
         </span>
@@ -234,6 +251,38 @@ export function MessageBubble({
             >
               Reply
             </button>
+            <button
+              type="button"
+              className={styles.menuItem}
+              onClick={() => {
+                onForward?.(message);
+                setMenuOpen(false);
+              }}
+            >
+              Forward
+            </button>
+            <button
+              type="button"
+              className={styles.menuItem}
+              onClick={() => {
+                onStar?.(message);
+                setMenuOpen(false);
+              }}
+            >
+              {message.starred ? "Unstar" : "Star"}
+            </button>
+            {message.outgoing && message.kind === "text" && (
+              <button
+                type="button"
+                className={styles.menuItem}
+                onClick={() => {
+                  onEdit?.(message);
+                  setMenuOpen(false);
+                }}
+              >
+                Edit
+              </button>
+            )}
             {message.body && (
               <button
                 type="button"
@@ -246,6 +295,16 @@ export function MessageBubble({
                 Copy
               </button>
             )}
+            <button
+              type="button"
+              className={`${styles.menuItem} ${styles.menuDanger}`}
+              onClick={() => {
+                onDeleteForMe?.(message);
+                setMenuOpen(false);
+              }}
+            >
+              Delete for me
+            </button>
             {message.outgoing && (
               <button
                 type="button"

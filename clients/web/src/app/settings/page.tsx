@@ -88,6 +88,12 @@ export default function SettingsPage() {
             onClick={() => router.push("/settings/profile")}
           />
           <Row
+            icon="check"
+            label="Starred messages"
+            note="Messages you bookmarked"
+            onClick={() => router.push("/settings/starred")}
+          />
+          <Row
             icon="chats"
             label="Notifications"
             note="Alerts for new messages"

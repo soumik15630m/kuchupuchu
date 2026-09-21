@@ -9,7 +9,8 @@ import { downloadGif, type Gif } from "@/lib/messaging/gifs";
 import type { Sticker } from "@/lib/messaging/stickers";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { compressImage, makeThumbnail, pickVoiceMimeType, videoPoster } from "@/lib/messaging/media";
-import type { ChatTarget } from "@/lib/messaging/client";
+import { targetChatId, type ChatTarget } from "@/lib/messaging/client";
+import { settingsFor, updateChatSettings } from "@/lib/messaging/chat-settings";
 import type { ReplyRef, StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
@@ -19,14 +20,23 @@ export function Composer({
   audience,
   replyTo,
   onReplyConsumed,
+  editing,
+  onEditDone,
+  mentionables,
 }: {
   target: ChatTarget;
   audience: string[];
   replyTo?: StoredMessage | null;
   onReplyConsumed?: () => void;
+  editing?: StoredMessage | null;
+  onEditDone?: () => void;
+  /** username (lowercase) -> email, for the @ autocomplete. */
+  mentionables?: Map<string, string>;
 }) {
   const { client } = useMessaging();
-  const [draft, setDraft] = useState("");
+  const chatId = targetChatId(target);
+  const [draft, setDraft] = useState(() => settingsFor(chatId).draft ?? "");
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
@@ -51,6 +61,22 @@ export function Composer({
     };
   }, []);
 
+  // Switching chats swaps the draft rather than carrying text across.
+  useEffect(() => {
+    setDraft(settingsFor(chatId).draft ?? "");
+  }, [chatId]);
+
+  useEffect(() => {
+    if (editing) setDraft(editing.body);
+  }, [editing]);
+
+  // Persisted on a debounce: a draft that only survives if you navigate away
+  // slowly is not a draft.
+  useEffect(() => {
+    const handle = setTimeout(() => updateChatSettings(chatId, { draft }), 400);
+    return () => clearTimeout(handle);
+  }, [chatId, draft]);
+
   function replyRef(): ReplyRef | undefined {
     if (!replyTo) return undefined;
     return {
@@ -63,10 +89,24 @@ export function Composer({
   async function sendText() {
     const body = draft.trim();
     if (!body || !client) return;
+
+    if (editing) {
+      setDraft("");
+      onEditDone?.();
+      updateChatSettings(chatId, { draft: "" });
+      try {
+        await client.edit(target, editing.id, body);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't edit that.");
+      }
+      return;
+    }
+
     const quoted = replyRef();
     setDraft("");
     setError(null);
     onReplyConsumed?.();
+    updateChatSettings(chatId, { draft: "" });
     if (inputRef.current) inputRef.current.style.height = "auto";
     try {
       await client.sendTyping(target, true);
@@ -101,11 +141,14 @@ export function Composer({
       }
 
       const quoted = replyRef();
+      const caption = draft.trim();
       onReplyConsumed?.();
+      setDraft("");
+      updateChatSettings(chatId, { draft: "" });
       const { mediaId, key, iv } = await client.uploadMedia(audience, blob);
       await client.send(target, {
         kind: "media",
-        body: "",
+        body: caption,
         replyTo: quoted,
         media: {
           mediaId,
@@ -246,6 +289,36 @@ export function Composer({
 
   const hasDraft = draft.trim().length > 0;
 
+  /** Handles matching whatever follows the "@" the caret sits after. */
+  const mentionMatches =
+    mentionQuery === null || !mentionables
+      ? []
+      : [...mentionables.keys()]
+          .filter((handle) => handle.startsWith(mentionQuery.toLowerCase()))
+          .slice(0, 6);
+
+  function updateMentionQuery(value: string, caret: number) {
+    // Only the token the caret is in counts, so an "@" earlier in the message
+    // does not keep the menu open.
+    const upToCaret = value.slice(0, caret);
+    const match = /(?:^|\s)@([a-z0-9._]*)$/i.exec(upToCaret);
+    setMentionQuery(match ? match[1] : null);
+  }
+
+  function applyMention(handle: string) {
+    const input = inputRef.current;
+    if (!input) return;
+    const caret = input.selectionStart ?? draft.length;
+    const before = draft.slice(0, caret).replace(/@([a-z0-9._]*)$/i, `@${handle} `);
+    const next = before + draft.slice(caret);
+    setDraft(next);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(before.length, before.length);
+    });
+  }
+
   return (
     <>
       {error && (
@@ -270,6 +343,39 @@ export function Composer({
           }}
           onClose={() => setShowEmoji(false)}
         />
+      )}
+
+      {mentionMatches.length > 0 && (
+        <div className={styles.mentionMenu} role="listbox" aria-label="Mention someone">
+          {mentionMatches.map((handle) => (
+            <button
+              key={handle}
+              type="button"
+              role="option"
+              aria-selected={false}
+              className={styles.mentionOption}
+              onClick={() => applyMention(handle)}
+            >
+              @{handle}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <div className={styles.editBar}>
+          <span>Editing message</span>
+          <button
+            type="button"
+            className={styles.recordCancel}
+            onClick={() => {
+              onEditDone?.();
+              setDraft("");
+            }}
+          >
+            Cancel
+          </button>
+        </div>
       )}
 
       <div className={styles.composer}>
@@ -305,6 +411,7 @@ export function Composer({
               onKeyDown={onKeyDown}
               onChange={(e) => {
                 setDraft(e.target.value);
+                updateMentionQuery(e.target.value, e.target.selectionStart ?? 0);
                 e.target.style.height = "auto";
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
                 // Stop on an empty box, and also after a pause -- otherwise

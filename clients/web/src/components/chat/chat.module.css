@@ -730,3 +730,142 @@
 .bubble.sticker .meta {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
+
+.mono {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.92em;
+  background: rgba(0, 0, 0, 0.07);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+:global([data-theme="dark"]) .mono {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.link {
+  color: #027eb5;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+:global([data-theme="dark"]) .link {
+  color: #53bdeb;
+}
+
+.mention {
+  color: #027eb5;
+  font-weight: 600;
+}
+
+:global([data-theme="dark"]) .mention {
+  color: #53bdeb;
+}
+
+/* Being named should stand out more than naming someone else. */
+.mention[data-self="true"] {
+  background: var(--accent-soft);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.edited {
+  font-style: italic;
+  opacity: 0.75;
+}
+
+.mentionMenu {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+}
+
+.mentionOption {
+  padding: 10px 14px;
+  text-align: left;
+  font-size: calc(14.5px * var(--font-scale));
+  color: var(--ink);
+}
+
+.mentionOption:hover {
+  background: var(--bg-hover);
+}
+
+.editBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: calc(12.5px * var(--font-scale));
+  flex: none;
+}
+
+.forwardSheet {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  max-height: 70%;
+  background: var(--bg-raised);
+  border-radius: 16px 16px 0 0;
+  box-shadow: var(--shadow-3);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.forwardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 6px;
+  font-size: calc(15px * var(--font-scale));
+}
+
+.forwardList {
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.forwardOption {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 16px;
+  text-align: left;
+  color: inherit;
+}
+
+.forwardOption:hover {
+  background: var(--bg-hover);
+}
+
+.forwardAvatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: calc(14px * var(--font-scale));
+  font-weight: 600;
+  flex: none;
+}
+
+.forwardName {
+  display: block;
+  font-size: calc(15px * var(--font-scale));
+}
+
+.forwardSub {
+  display: block;
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--ink-muted);
+}
