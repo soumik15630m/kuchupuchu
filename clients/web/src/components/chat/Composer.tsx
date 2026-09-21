@@ -41,10 +41,12 @@ export function Composer({
   const startedAtRef = useRef(0);
   const cancelledRef = useRef(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const typingIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (tickRef.current) clearInterval(tickRef.current);
+      if (typingIdleRef.current) clearTimeout(typingIdleRef.current);
       recorderRef.current?.stream.getTracks().forEach((t) => t.stop());
     };
   }, []);
@@ -305,7 +307,17 @@ export function Composer({
                 setDraft(e.target.value);
                 e.target.style.height = "auto";
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-                void client?.sendTyping(target, e.target.value.length === 0);
+                // Stop on an empty box, and also after a pause -- otherwise
+                // the peer's indicator only clears on its own expiry.
+                const empty = e.target.value.length === 0;
+                void client?.sendTyping(target, empty);
+                if (typingIdleRef.current) clearTimeout(typingIdleRef.current);
+                if (!empty) {
+                  typingIdleRef.current = setTimeout(
+                    () => void client?.sendTyping(target, true),
+                    3000
+                  );
+                }
               }}
             />
             <button

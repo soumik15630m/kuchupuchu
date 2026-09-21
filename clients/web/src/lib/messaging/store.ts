@@ -1,3 +1,5 @@
+import { RANK, applyReceipt } from "./receipts.mjs";
+
 export type MessageStatus = "sending" | "sent" | "delivered" | "read" | "failed";
 
 export interface MediaRef {
@@ -37,6 +39,13 @@ export interface StoredMessage {
   replyTo?: ReplyRef;
   sentAtMs: number;
   status: MessageStatus;
+  /** Who this was addressed to, excluding the sender's own devices, captured
+   * at send time. The aggregate status is derived against this set: a group
+   * message is only "read" once every recipient has read it, which is what
+   * the second tick turning blue has to mean. */
+  recipients?: string[];
+  deliveredTo?: string[];
+  readBy?: string[];
   /** Emoji keyed by the member who reacted, so one person cannot stack
    * several reactions on the same message. */
   reactions?: Record<string, string>;
@@ -108,19 +117,32 @@ export async function allMessages(): Promise<StoredMessage[]> {
 /** A receipt must never downgrade a message that is already further along —
  * `delivered` can arrive after `read` when one of a person's two devices is
  * slower than the other. */
-const RANK: Record<MessageStatus, number> = {
-  failed: -1,
-  sending: 0,
-  sent: 1,
-  delivered: 2,
-  read: 3,
-};
-
 export async function advanceStatus(id: string, status: MessageStatus): Promise<StoredMessage | null> {
   const existing = await getMessage(id);
   if (!existing) return null;
   if (RANK[status] <= RANK[existing.status] && status !== "failed") return existing;
   const updated = { ...existing, status };
+  await putMessage(updated);
+  return updated;
+}
+
+/** Records one recipient's receipt and recomputes the aggregate. The decision
+ * itself lives in receipts.mjs, which is unit tested; this is the storage half. */
+export async function recordReceipt(
+  id: string,
+  kind: "delivered" | "read",
+  byEmail: string | null
+): Promise<StoredMessage | null> {
+  const existing = await getMessage(id);
+  if (!existing) return null;
+
+  const updated = applyReceipt(existing, kind, byEmail);
+  const unchanged =
+    updated.status === existing.status &&
+    updated.deliveredTo.length === (existing.deliveredTo ?? []).length &&
+    updated.readBy.length === (existing.readBy ?? []).length;
+  if (unchanged) return existing;
+
   await putMessage(updated);
   return updated;
 }

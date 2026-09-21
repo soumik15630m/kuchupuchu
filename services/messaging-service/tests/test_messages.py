@@ -174,3 +174,64 @@ def test_a_live_socket_receives_a_message_without_polling(client, env):
 
     assert pushed["type"] == "message"
     assert pushed["message"]["envelope"] == "live"
+
+
+def test_typing_relays_the_conversation_id(client, env):
+    """A group's typing indicator belongs to the group. Without chat_id the
+    recipient can only attribute it to the sender's 1:1 thread, so group
+    typing never shows at all."""
+    add_member(env, "a@example.com", "dev-a")
+    add_member(env, "b@example.com", "dev-b")
+
+    with client.websocket_connect(f"/ws?token={token_for('b@example.com', 'dev-b')}") as bob:
+        assert bob.receive_json()["type"] == "backlog"
+        with client.websocket_connect(f"/ws?token={token_for('a@example.com', 'dev-a')}") as alice:
+            assert alice.receive_json()["type"] == "backlog"
+            alice.send_json({"type": "typing", "to_device": "dev-b", "chat_id": "group-xyz"})
+            frame = bob.receive_json()
+
+    assert frame["type"] == "typing"
+    assert frame["from_email"] == "a@example.com"
+    assert frame["chat_id"] == "group-xyz"
+
+
+def test_typing_for_a_one_to_one_carries_no_conversation_id(client, env):
+    add_member(env, "a@example.com", "dev-a")
+    add_member(env, "b@example.com", "dev-b")
+
+    with client.websocket_connect(f"/ws?token={token_for('b@example.com', 'dev-b')}") as bob:
+        assert bob.receive_json()["type"] == "backlog"
+        with client.websocket_connect(f"/ws?token={token_for('a@example.com', 'dev-a')}") as alice:
+            assert alice.receive_json()["type"] == "backlog"
+            alice.send_json({"type": "typing", "to_device": "dev-b"})
+            frame = bob.receive_json()
+
+    assert frame["chat_id"] is None
+
+
+def test_a_delivery_receipt_names_who_acknowledged(client, env):
+    """Group ticks are aggregated per recipient, so the sender has to know
+    which member each receipt came from."""
+    add_member(env, "a@example.com", "dev-a")
+    add_member(env, "b@example.com", "dev-b")
+
+    with client.websocket_connect(f"/ws?token={token_for('a@example.com', 'dev-a')}") as alice:
+        assert alice.receive_json()["type"] == "backlog"
+        client.post(
+            "/send",
+            json={
+                "client_msg_id": "m1",
+                "recipients": [{"email": "b@example.com", "device_id": "dev-b", "envelope": "c"}],
+            },
+            headers=auth("a@example.com", "dev-a"),
+        )
+        message_id = client.get("/pending", headers=auth("b@example.com", "dev-b")).json()["messages"][0]["id"]
+        client.post(
+            "/receipts/delivered",
+            json={"message_ids": [message_id]},
+            headers=auth("b@example.com", "dev-b"),
+        )
+        frame = alice.receive_json()
+
+    assert frame["type"] == "delivered"
+    assert frame["by"] == "b@example.com"

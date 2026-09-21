@@ -6,6 +6,7 @@ import {
   advanceStatus,
   getMessage,
   putMessage,
+  recordReceipt,
   type MediaRef,
   type ReplyRef,
   type StoredMessage,
@@ -44,6 +45,9 @@ export function targetChatId(target: ChatTarget): string {
 }
 
 export interface TypingEvent {
+  /** Which conversation, so a group and a 1:1 cannot be confused. For a 1:1
+   * this is the sender's own address, which is the chat id on this end. */
+  chatId: string;
   fromEmail: string;
   stopped: boolean;
 }
@@ -157,19 +161,25 @@ export class MessagingClient {
         break;
       case "delivered":
       case "read": {
-        const updated = await advanceStatus(
+        const updated = await recordReceipt(
           String(frame.client_msg_id),
-          frame.type === "read" ? "read" : "delivered"
+          frame.type === "read" ? "read" : "delivered",
+          typeof frame.by === "string" ? frame.by : null
         );
         if (updated) this.events.onStatus(updated);
         break;
       }
-      case "typing":
+      case "typing": {
+        const from = String(frame.from_email);
         this.events.onTyping({
-          fromEmail: String(frame.from_email),
+          // A group message names its conversation explicitly; a 1:1 does not
+          // need to, because the sender *is* the conversation on this end.
+          chatId: typeof frame.chat_id === "string" && frame.chat_id ? frame.chat_id : from,
+          fromEmail: from,
           stopped: Boolean(frame.stopped),
         });
         break;
+      }
     }
   }
 
@@ -368,6 +378,10 @@ export class MessagingClient {
       replyTo: content.replyTo,
       sentAtMs,
       status: "sending",
+      recipients:
+        target.kind === "group"
+          ? target.group.members.filter((m) => m !== this.api.email)
+          : [target.email],
     };
     // Control messages and status posts have no chat bubble; their local effect
     // was already applied by the caller.
@@ -521,10 +535,21 @@ export class MessagingClient {
   async sendTyping(target: ChatTarget, stopped = false): Promise<void> {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     const now = Date.now();
-    if (!stopped && now - this.lastTypingSentAt < TYPING_THROTTLE_MS) return;
-    this.lastTypingSentAt = now;
+
+    // Only a "typing" frame is throttled -- resending it on every keystroke is
+    // pointless, but a stop has to go out immediately. Crucially the stop must
+    // NOT arm the throttle: doing so swallowed the next real typing signal for
+    // the whole window, which is why group typing never appeared after the box
+    // had been cleared once.
+    if (stopped) {
+      this.lastTypingSentAt = 0;
+    } else {
+      if (now - this.lastTypingSentAt < TYPING_THROTTLE_MS) return;
+      this.lastTypingSentAt = now;
+    }
 
     const audience = target.kind === "group" ? target.group.members : [target.email];
+    const chatId = target.kind === "group" ? target.group.id : null;
     for (const email of audience) {
       if (email === this.api.email) continue;
       let devices: string[];
@@ -534,7 +559,9 @@ export class MessagingClient {
         continue;
       }
       for (const device of devices) {
-        this.socket.send(JSON.stringify({ type: "typing", to_device: device, stopped }));
+        this.socket.send(
+          JSON.stringify({ type: "typing", to_device: device, stopped, chat_id: chatId })
+        );
       }
     }
   }

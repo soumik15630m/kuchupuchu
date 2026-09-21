@@ -9,6 +9,8 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import styles from "@/components/chat/chat.module.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
+import { useDirectory } from "@/lib/directory/DirectoryProvider";
+import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { messagesFor, type StoredMessage } from "@/lib/messaging/store";
@@ -33,7 +35,8 @@ export default function ChatPage() {
   const router = useRouter();
   const email = decodeURIComponent(params.email);
   const { wallpaperFor } = useTheme();
-  const { client, revision, typingFrom, online, ready } = useMessaging();
+  const { nameFor } = useDirectory();
+  const { client, revision, typing: typingState, online, ready } = useMessaging();
 
   const chat = useChatTarget(email, revision);
   const name = chat.title;
@@ -43,6 +46,7 @@ export default function ChatPage() {
   const canvasRef = useRef<HTMLDivElement>(null);
 
   const wp = wallpaperFor(email);
+  const typing = typistsIn(typingState, email, Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -82,7 +86,7 @@ export default function ChatPage() {
   useLayoutEffect(() => {
     const el = canvasRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, typingFrom]);
+  }, [messages, typing]);
 
   const style = wallpaperStyle(wp, imageUrl);
   let lastDay = "";
@@ -92,7 +96,7 @@ export default function ChatPage() {
       <Pane>
         <PaneHeader
           title={name}
-          subtitle={typingFrom === email ? "typing…" : chat.subtitle}
+          subtitle={typingLabel(typing.map(nameFor), Boolean(chat.group)) ?? chat.subtitle}
           backHref="/chats"
           actions={
             <>
@@ -159,8 +163,11 @@ export default function ChatPage() {
                   </div>
                 );
               })}
-              {typingFrom === email && (
-                <div className={styles.typing} aria-label={`${name} is typing`}>
+              {typing.length > 0 && (
+                <div
+                  className={styles.typing}
+                  aria-label={typingLabel(typing.map(nameFor), Boolean(chat.group)) ?? "typing"}
+                >
                   <span className={styles.typingDot} />
                   <span className={styles.typingDot} />
                   <span className={styles.typingDot} />

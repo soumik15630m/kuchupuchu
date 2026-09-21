@@ -17,6 +17,13 @@ if os.environ.get("KUCHUPUCHU_SKIP_DOTENV") != "1":
             load_dotenv(_candidate)
             break
 
+from app.logging_config import configure_logging
+
+# Before anything else imports a logger: without this, every logger.info and
+# logger.exception in this service goes nowhere, including the one that reports
+# a failed WebSocket handler.
+configure_logging()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

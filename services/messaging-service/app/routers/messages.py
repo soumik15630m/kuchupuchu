@@ -163,9 +163,18 @@ async def websocket(socket: WebSocket, token: str = ""):
             elif kind == "typing":
                 to_device = payload.get("to_device")
                 if isinstance(to_device, str) and to_device:
+                    # chat_id must be relayed: a group's indicator belongs to
+                    # the group, not to the sender's 1:1 thread. It is absent
+                    # for a 1:1, where the recipient derives it from from_email.
+                    chat_id = payload.get("chat_id")
                     await hub.send(
                         to_device,
-                        {"type": "typing", "from_email": email, "stopped": bool(payload.get("stopped"))},
+                        {
+                            "type": "typing",
+                            "from_email": email,
+                            "chat_id": chat_id if isinstance(chat_id, str) and chat_id else None,
+                            "stopped": bool(payload.get("stopped")),
+                        },
                     )
 
             elif kind == "delivered":
