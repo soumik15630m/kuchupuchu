@@ -36,7 +36,8 @@ interface Content {
     | "reaction"
     | "deletion"
     | "status-view"
-    | "edit";
+    | "edit"
+    | "group-update";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -272,7 +273,8 @@ export class MessagingClient {
       content.kind === "reaction" ||
       content.kind === "deletion" ||
       content.kind === "status-view" ||
-      content.kind === "edit"
+      content.kind === "edit" ||
+      content.kind === "group-update"
     ) {
       await this.applyControl(content, wire.from_email);
       await this.acknowledge(wire.id);
@@ -322,6 +324,15 @@ export class MessagingClient {
   }
 
   private async applyControl(content: Content, fromEmail: string): Promise<void> {
+    if (content.kind === "group-update") {
+      // The group metadata already merged in ingest(); this only records what
+      // changed, so members see "X added Y" rather than silent edits.
+      if (!content.group) return;
+      const notice = await addSystemNotice(content.group.id, content.body, "group-updated");
+      this.events.onMessage(notice);
+      return;
+    }
+
     if (!content.target) return;
 
     if (content.kind === "status-view") {
@@ -713,6 +724,27 @@ export class MessagingClient {
       }
     }
     return sent;
+  }
+
+  /** Broadcasts a group edit. The new roster rides in the ordinary group ref,
+   * so anyone still receiving it converges; `body` is the human summary. */
+  async announceGroupUpdate(group: Group, summary: string): Promise<void> {
+    await this.send({ kind: "group", group }, { kind: "group-update", body: summary });
+    const notice = await addSystemNotice(group.id, summary, "group-updated");
+    this.events.onMessage(notice);
+  }
+
+  /** Tells someone being removed, before they drop off the roster — after the
+   * edit they are no longer in the audience and would never hear about it. */
+  async announceRemoval(removedEmail: string, group: Group, summary: string): Promise<void> {
+    try {
+      await this.send(
+        { kind: "direct", email: removedEmail },
+        { kind: "group-update", body: summary, group: toRef({ ...group, members: [] }) }
+      );
+    } catch {
+      // Best effort: they find out when messages stop arriving.
+    }
   }
 
   async sendLocation(

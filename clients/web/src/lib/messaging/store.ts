@@ -58,7 +58,7 @@ export interface StoredMessage {
   starred?: boolean;
   /** Set on `system` notices, which are generated on this device and never
    * sent anywhere. */
-  systemKind?: "security-code-changed";
+  systemKind?: "security-code-changed" | "group-updated";
 }
 
 /** Records a local-only notice in a chat. Used for things this device
