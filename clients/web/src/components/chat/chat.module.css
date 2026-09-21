@@ -1316,3 +1316,70 @@
   cursor: pointer;
   padding: 2px 6px;
 }
+
+/* --- view once --- */
+.viewOnceChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  margin: 2px 0;
+  border: 1px solid var(--accent);
+  border-radius: 18px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.viewOnceChip[data-spent="true"] {
+  border-style: dashed;
+  border-color: var(--ink-muted);
+  color: var(--ink-muted);
+  cursor: default;
+}
+
+.viewOnceViewer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+  background: #000;
+  color: #fff;
+}
+
+.viewOnceViewer img,
+.viewOnceViewer video {
+  max-width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+}
+
+.viewOnceViewer button {
+  padding: 10px 26px;
+  border: none;
+  border-radius: 20px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.viewOnceViewer p {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.75;
+  text-align: center;
+  max-width: 340px;
+}
+
+.editorNote {
+  font-size: 12px;
+  opacity: 0.75;
+}

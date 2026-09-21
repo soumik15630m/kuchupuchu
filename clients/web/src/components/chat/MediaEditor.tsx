@@ -48,7 +48,7 @@ export function MediaEditor({
   onCancel: () => void;
   /** Hands back a flattened JPEG; the caller sends it through the ordinary
    * encrypted media pipeline, editor or no editor. */
-  onDone: (blob: Blob, caption: string) => void;
+  onDone: (blob: Blob, caption: string, viewOnce: boolean) => void;
 }) {
   const [bitmap, setBitmap] = useState<ImageBitmap | null>(null);
   const [url, setUrl] = useState<string | null>(null);
@@ -62,6 +62,7 @@ export function MediaEditor({
   const [pendingText, setPendingText] = useState<{ at: Point; value: string } | null>(null);
   const [history, setHistory] = useState<("stroke" | "text")[]>([]);
   const [caption, setCaption] = useState("");
+  const [viewOnce, setViewOnce] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const stageRef = useRef<HTMLDivElement>(null);
@@ -276,7 +277,7 @@ export function MediaEditor({
       const blob = await new Promise<Blob | null>((resolve) =>
         out.toBlob(resolve, "image/jpeg", 0.85)
       );
-      if (blob) onDone(blob, caption.trim());
+      if (blob) onDone(blob, caption.trim(), viewOnce);
     } finally {
       setBusy(false);
     }
@@ -389,6 +390,22 @@ export function MediaEditor({
           />
         </div>
       )}
+
+      <div className={styles.editorRow}>
+        <button
+          type="button"
+          data-active={viewOnce}
+          onClick={() => setViewOnce((v) => !v)}
+          aria-pressed={viewOnce}
+        >
+          View once
+        </button>
+        {viewOnce && (
+          <span className={styles.editorNote}>
+            Disappears after they open it. It cannot stop a screenshot.
+          </span>
+        )}
+      </div>
 
       <div className={styles.editorSend}>
         <input

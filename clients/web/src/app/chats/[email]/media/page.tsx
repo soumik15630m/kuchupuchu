@@ -30,7 +30,9 @@ export default function ChatMediaPage() {
   }, [email, revision]);
 
   const media = useMemo(
-    () => messages.filter((m) => m.kind === "media" || m.kind === "sticker"),
+    // View-once attachments never belong in a gallery: the whole point is that
+    // there is no second look.
+    () => messages.filter((m) => !m.viewOnce && (m.kind === "media" || m.kind === "sticker")),
     [messages]
   );
   const files = useMemo(

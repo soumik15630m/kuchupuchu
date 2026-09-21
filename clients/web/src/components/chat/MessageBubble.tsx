@@ -78,6 +78,82 @@ function VoiceNote({ message }: { message: StoredMessage }) {
   );
 }
 
+/** A view-once attachment: one tap, shown full-screen, then gone from this
+ * device. The wording is deliberately plain about what this does and does not
+ * prevent -- no client-side feature can stop the other person photographing
+ * their own screen, and implying otherwise would be the harmful part. */
+function ViewOnceAttachment({
+  message,
+  onOpened,
+}: {
+  message: StoredMessage;
+  onOpened?: (message: StoredMessage) => void;
+}) {
+  const { client } = useMessaging();
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const media = message.media;
+
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+
+  if (message.outgoing) {
+    return (
+      <span className={styles.viewOnceChip} data-spent={message.viewedOnceAtMs ? "true" : undefined}>
+        <Icon name="image" size={15} />
+        {message.viewedOnceAtMs ? "Opened" : "Photo · view once"}
+      </span>
+    );
+  }
+
+  if (message.viewedOnceAtMs || !media) {
+    return (
+      <span className={styles.viewOnceChip} data-spent="true">
+        <Icon name="image" size={15} />
+        Opened
+      </span>
+    );
+  }
+
+  async function open() {
+    if (!client || !media || loading) return;
+    setLoading(true);
+    try {
+      const blob = await client.fetchMedia(media);
+      setUrl(URL.createObjectURL(blob));
+    } catch {
+      setLoading(false);
+    }
+  }
+
+  function close() {
+    if (url) URL.revokeObjectURL(url);
+    setUrl(null);
+    onOpened?.(message);
+  }
+
+  return (
+    <>
+      <button type="button" className={styles.viewOnceChip} onClick={open} disabled={loading}>
+        <Icon name="image" size={15} />
+        {loading ? "Opening…" : "Tap to view once"}
+      </button>
+      {url && (
+        <div className={styles.viewOnceViewer} role="dialog" aria-label="View once photo">
+          {media.mime.startsWith("video/") ? (
+            <video src={url} controls autoPlay playsInline onEnded={close} />
+          ) : (
+            <img src={url} alt="" />
+          )}
+          <button type="button" onClick={close}>
+            Done
+          </button>
+          <p>Closing this removes it from your device. It cannot prevent a screenshot.</p>
+        </div>
+      )}
+    </>
+  );
+}
+
 function MediaAttachment({ message }: { message: StoredMessage }) {
   const { client } = useMessaging();
   const [url, setUrl] = useState<string | null>(null);
@@ -136,9 +212,11 @@ export function MessageBubble({
   onEdit,
   onForward,
   onStar,
+  onViewOnceOpened,
 }: {
   message: StoredMessage;
   mentionables?: Map<string, string>;
+  onViewOnceOpened?: (message: StoredMessage) => void;
   onReply?: (message: StoredMessage) => void;
   onReact?: (message: StoredMessage, emoji: string) => void;
   onDelete?: (message: StoredMessage) => void;
@@ -196,8 +274,12 @@ export function MessageBubble({
           </span>
         )}
 
-        {(message.kind === "media" || message.kind === "sticker") && (
-          <MediaAttachment message={message} />
+        {message.viewOnce ? (
+          <ViewOnceAttachment message={message} onOpened={onViewOnceOpened} />
+        ) : (
+          (message.kind === "media" || message.kind === "sticker") && (
+            <MediaAttachment message={message} />
+          )
         )}
         {message.kind === "voice" && <VoicePlayer message={message} />}
         {message.kind === "file" && <FileAttachment message={message} />}

@@ -179,6 +179,9 @@ export default function ChatPage() {
                         refreshChats();
                         setMessages((prev) => prev.filter((m) => m.id !== msg.id));
                       }}
+                      onViewOnceOpened={(msg) =>
+                        chat.target && void client?.markViewOnceOpened(chat.target, msg)
+                      }
                       onEdit={setEditing}
                       onForward={setForwarding}
                       onStar={async (msg) => {

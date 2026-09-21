@@ -52,6 +52,11 @@ export interface StoredMessage {
   location?: { lat: number; lon: number; accuracyM?: number };
   contact?: { email: string; username: string | null; displayName: string | null };
   link?: LinkPreview;
+  /** A photo or video the sender marked as view-once. The blob is dropped
+   * from this device the moment it has been opened; nothing here can stop a
+   * screenshot, and the UI says so rather than implying otherwise. */
+  viewOnce?: boolean;
+  viewedOnceAtMs?: number;
   sentAtMs: number;
   status: MessageStatus;
   /** Who this was addressed to, excluding the sender's own devices, captured

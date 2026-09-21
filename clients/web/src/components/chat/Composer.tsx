@@ -141,7 +141,7 @@ export function Composer({
     }
   }
 
-  async function sendAttachment(file: File, captionOverride?: string) {
+  async function sendAttachment(file: File, captionOverride?: string, viewOnce?: boolean) {
     if (!client) return;
     setBusy(true);
     setError(null);
@@ -179,6 +179,7 @@ export function Composer({
         kind: isDocument ? "file" : "media",
         body: caption,
         replyTo: quoted,
+        viewOnce: viewOnce || undefined,
         media: {
           mediaId,
           key,
@@ -413,12 +414,12 @@ export function Composer({
         <MediaEditor
           file={editingPhoto}
           onCancel={() => setEditingPhoto(null)}
-          onDone={(blob, caption) => {
+          onDone={(blob, caption, viewOnce) => {
             const edited = new File([blob], editingPhoto.name.replace(/\.[^.]+$/, "") + ".jpg", {
               type: "image/jpeg",
             });
             setEditingPhoto(null);
-            void sendAttachment(edited, caption);
+            void sendAttachment(edited, caption, viewOnce);
           }}
         />
       )}

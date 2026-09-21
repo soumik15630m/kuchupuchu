@@ -50,7 +50,8 @@ interface Content {
     | "group-update"
     | "profile"
     | "history-request"
-    | "history";
+    | "history"
+    | "view-once-opened";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -71,6 +72,8 @@ interface Content {
   /** Set on `text`: a preview the sender resolved, so the recipient never
    * fetches the link themselves. */
   link?: LinkPreview;
+  /** Set on `media`: the attachment may be opened once, then it is gone. */
+  viewOnce?: boolean;
   /** Set on `history`: a batch of this account's own past messages, sent
    * device-to-device when a new device is linked. The server stores these as
    * ordinary ciphertext and learns nothing it did not already hold. */
@@ -306,7 +309,8 @@ export class MessagingClient {
       content.kind === "group-update" ||
       content.kind === "profile" ||
       content.kind === "history-request" ||
-      content.kind === "history"
+      content.kind === "history" ||
+      content.kind === "view-once-opened"
     ) {
       await this.applyControl(content, wire.from_email, wire.from_device);
       await this.acknowledge(wire.id);
@@ -348,6 +352,7 @@ export class MessagingClient {
       location: content.location,
       contact: content.contact,
       link: content.link,
+      viewOnce: content.viewOnce,
       sentAtMs,
       status: "delivered",
     };
@@ -382,6 +387,18 @@ export class MessagingClient {
         added += 1;
       }
       if (added > 0) this.events.onOutboxDrained(added);
+      return;
+    }
+
+    if (content.kind === "view-once-opened") {
+      if (!content.target) return;
+      const message = await getMessage(content.target);
+      // Only the author's copy is annotated, and only by the person it was
+      // sent to -- otherwise anyone could mark anyone's photo as opened.
+      if (!message || !message.outgoing || !message.recipients?.includes(fromEmail)) return;
+      const updated = { ...message, viewedOnceAtMs: content.sentAtMs, media: undefined };
+      await putMessage(updated);
+      this.events.onStatus(updated);
       return;
     }
 
@@ -595,7 +612,8 @@ export class MessagingClient {
       content.kind === "reaction" ||
       content.kind === "deletion" ||
       content.kind === "status-view" ||
-      content.kind === "edit";
+      content.kind === "edit" ||
+      content.kind === "view-once-opened";
     const chatId = targetChatId(target);
 
     const body: Content = {
@@ -616,6 +634,7 @@ export class MessagingClient {
       location: content.location,
       contact: content.contact,
       link: content.link,
+      viewOnce: content.viewOnce,
       sentAtMs,
       status: "sending",
       recipients:
@@ -721,6 +740,24 @@ export class MessagingClient {
       );
     } catch {
       // A view receipt is not worth surfacing or retrying.
+    }
+  }
+
+  /** Burns a view-once attachment after it has been seen.
+   *
+   * The blob is dropped from this device first and the sender told second: if
+   * the notice fails to send, the photo is still gone here, which is the
+   * promise that actually matters. */
+  async markViewOnceOpened(chat: ChatTarget, message: StoredMessage): Promise<void> {
+    if (!message.viewOnce || message.viewedOnceAtMs) return;
+    const viewedOnceAtMs = Date.now();
+    const burned: StoredMessage = { ...message, viewedOnceAtMs, media: undefined };
+    await putMessage(burned);
+    this.events.onStatus(burned);
+    try {
+      await this.send(chat, { kind: "view-once-opened", body: "", target: message.id, sentAtMs: viewedOnceAtMs });
+    } catch {
+      // The sender simply will not see "opened"; nothing to retry usefully.
     }
   }
 

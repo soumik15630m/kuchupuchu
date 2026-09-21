@@ -24,6 +24,7 @@ import styles from "./chats.module.css";
 function preview(message: StoredMessage | null): string {
   if (!message) return "No messages yet";
   const prefix = message.outgoing ? "You: " : "";
+  if (message.viewOnce) return `${prefix}📷 Photo`;
   if (message.kind === "voice") return `${prefix}🎤 Voice note`;
   if (message.kind === "sticker") return `${prefix}🏷️ Sticker`;
   if (message.kind === "media") return `${prefix}📎 Attachment`;
