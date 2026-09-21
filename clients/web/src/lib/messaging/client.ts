@@ -595,8 +595,17 @@ export class MessagingClient {
       }
       for (const device of devices) {
         if (email === this.api.email.toLowerCase() && device === this.deviceId) continue;
-        const envelope = await this.sessions.encrypt(email, device, plaintext);
-        targets.push({ email, device_id: device, envelope: JSON.stringify(envelope) });
+        try {
+          const envelope = await this.sessions.encrypt(email, device, plaintext);
+          targets.push({ email, device_id: device, envelope: JSON.stringify(envelope) });
+        } catch (err) {
+          // A device that is registered but has never published a prekey
+          // bundle cannot be encrypted to. Skipping it keeps the message
+          // going to the peer's other devices; failing the whole send would
+          // mean one half-set-up device silences the conversation entirely.
+          // send() still throws if this leaves nobody at all.
+          console.warn(`messaging: skipping ${email}/${device}`, err);
+        }
       }
     }
     return targets;
@@ -902,7 +911,16 @@ export class MessagingClient {
       if (!chat) continue;
 
       try {
-        await this.send(chat, { kind: "text", body: message.body, sentAtMs: message.sentAtMs });
+        // Everything the bubble already shows has to be replayed, not just
+        // the body: a retried message that silently lost its reply or its
+        // link preview looks like a different message to the recipient.
+        await this.send(chat, {
+          kind: "text",
+          body: message.body,
+          replyTo: message.replyTo,
+          link: message.link,
+          sentAtMs: message.sentAtMs,
+        });
         await deleteMessage(message.id);
         sent += 1;
       } catch {

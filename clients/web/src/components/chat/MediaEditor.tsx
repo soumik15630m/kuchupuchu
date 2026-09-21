@@ -65,7 +65,12 @@ export function MediaEditor({
   const [viewOnce, setViewOnce] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const wrapRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  // The stage is sized in pixels rather than by aspect-ratio: with a crop
+  // overlay and a drawing canvas laid over the photo, the box has to be
+  // exactly the displayed image, and CSS cannot letterbox one box two ways.
+  const [stageSize, setStageSize] = useState<{ w: number; h: number } | null>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<{ mode: "crop" | "stroke"; origin: Point } | null>(null);
 
@@ -99,6 +104,24 @@ export function MediaEditor({
     if (aspect === null) return;
     setCrop(cropForAspect(aspect, imageAspect));
   }, [aspect, imageAspect]);
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || !size) return;
+    const fit = () => {
+      const box = wrap.getBoundingClientRect();
+      if (box.width < 1 || box.height < 1) return;
+      const scale = Math.min(box.width / size.width, box.height / size.height);
+      setStageSize({
+        w: Math.max(1, Math.floor(size.width * scale)),
+        h: Math.max(1, Math.floor(size.height * scale)),
+      });
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, [size?.width, size?.height]);
 
   const redraw = useCallback(() => {
     const canvas = overlayRef.current;
@@ -137,7 +160,7 @@ export function MediaEditor({
 
   useEffect(() => {
     redraw();
-  }, [redraw, bitmap, rotation]);
+  }, [redraw, bitmap, rotation, stageSize]);
 
   useEffect(() => {
     const onResize = () => redraw();
@@ -317,11 +340,11 @@ export function MediaEditor({
         </div>
       </div>
 
-      <div className={styles.editorStageWrap}>
+      <div ref={wrapRef} className={styles.editorStageWrap}>
         <div
           ref={stageRef}
           className={styles.editorStage}
-          style={{ aspectRatio: size ? `${size.width} / ${size.height}` : undefined }}
+          style={stageSize ? { width: stageSize.w, height: stageSize.h } : { width: 0, height: 0 }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}

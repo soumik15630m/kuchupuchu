@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { ApiError, requestOtp, verifyOtp } from "@/lib/api/client";
+import { claimLocalDataFor } from "@/lib/auth/local-data";
 import { useSession } from "@/lib/auth/SessionProvider";
 
 import styles from "./login.module.css";
@@ -46,6 +47,10 @@ export default function LoginPage() {
     setError(null);
     const normalized = email.trim().toLowerCase();
     try {
+      // Before the code is spent, not after: verifyOtp registers this
+      // browser's device id, and a member signing in after someone else needs
+      // a fresh one rather than inheriting a device that is not theirs.
+      await claimLocalDataFor(normalized);
       signIn(normalized, await verifyOtp(normalized, code.trim()));
       router.replace("/chats");
     } catch (err) {
