@@ -33,7 +33,7 @@ export interface StoredMessage {
   chatId: string;
   fromEmail: string;
   outgoing: boolean;
-  kind: "text" | "media" | "voice" | "sticker";
+  kind: "text" | "media" | "voice" | "sticker" | "system";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -54,6 +54,33 @@ export interface StoredMessage {
   editedAtMs?: number;
   /** Local-only bookmark; never sent. */
   starred?: boolean;
+  /** Set on `system` notices, which are generated on this device and never
+   * sent anywhere. */
+  systemKind?: "security-code-changed";
+}
+
+/** Records a local-only notice in a chat. Used for things this device
+ * observed rather than received — a peer's security code changing, for
+ * instance, which no message ever announces. */
+export async function addSystemNotice(
+  chatId: string,
+  body: string,
+  systemKind: NonNullable<StoredMessage["systemKind"]>
+): Promise<StoredMessage> {
+  const notice: StoredMessage = {
+    id: crypto.randomUUID(),
+    chatId,
+    fromEmail: "",
+    outgoing: false,
+    kind: "system",
+    body,
+    sentAtMs: Date.now(),
+    // Never unread: a notice is not a message someone is waiting on a reply to.
+    status: "read",
+    systemKind,
+  };
+  await putMessage(notice);
+  return notice;
 }
 
 export interface ChatSummary {
@@ -159,6 +186,8 @@ export async function deleteMessage(id: string): Promise<void> {
  * attachments described rather than left blank. */
 export function searchableText(message: StoredMessage): string {
   if (message.deletedForEveryone) return "";
+  // System notices are this device's own commentary, not conversation.
+  if (message.kind === "system") return "";
   const body = message.body.replace(/```|[*_~]/g, "");
   if (body) return body;
   if (message.kind === "voice") return "voice note";

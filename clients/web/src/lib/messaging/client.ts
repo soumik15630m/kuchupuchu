@@ -1,8 +1,9 @@
 import type { Session, WireMessage } from "../api/client";
-import { getGroup, isGroupId, toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
+import { getGroup, isGroupId, loadGroups, toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
 import { decryptBlob } from "./media";
 import { SessionManager, decodeContent, encodeContent, type MessageEnvelope } from "./sessions";
 import {
+  addSystemNotice,
   advanceStatus,
   deleteMessage,
   getMessage,
@@ -99,7 +100,26 @@ export class MessagingClient {
     private readonly deviceId: string,
     private readonly events: MessagingEvents
   ) {
-    this.sessions = new SessionManager(api, deviceId);
+    this.sessions = new SessionManager(api, deviceId, (peerEmail) => {
+      void this.noteSecurityCodeChanged(peerEmail);
+    });
+  }
+
+  /** Leaves a notice in every chat the peer is part of. A code change in a
+   * group matters there too, not only in the 1:1 thread. */
+  private async noteSecurityCodeChanged(peerEmail: string): Promise<void> {
+    const chatIds = new Set<string>([peerEmail]);
+    for (const group of loadGroups()) {
+      if (group.members.includes(peerEmail)) chatIds.add(group.id);
+    }
+    for (const chatId of chatIds) {
+      const notice = await addSystemNotice(
+        chatId,
+        `${peerEmail}'s security code changed. If you verified it before, check it again.`,
+        "security-code-changed"
+      );
+      this.events.onMessage(notice);
+    }
   }
 
   async start(): Promise<void> {

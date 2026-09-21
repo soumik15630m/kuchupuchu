@@ -1,4 +1,5 @@
 import type { Session } from "../api/client";
+import { checkAndPin } from "../crypto/identity-pins";
 import { loadIdentity, saveIdentity } from "../crypto/identity-store";
 import { MessageRatchet, type RatchetEnvelope } from "../crypto/message-ratchet";
 import {
@@ -45,8 +46,29 @@ export class SessionManager {
 
   constructor(
     private readonly api: Session,
-    private readonly deviceId: string
+    private readonly deviceId: string,
+    /** Called when a peer device presents a different identity key than the
+     * one pinned for it. */
+    private readonly onIdentityChanged?: (peerEmail: string, peerDeviceId: string) => void
   ) {}
+
+  /** Pins whatever key a peer device just presented, and reports a change.
+   * Trust-on-first-use: the first key is accepted silently, any later change
+   * is surfaced. */
+  private async pin(
+    peerEmail: string,
+    peerDeviceId: string,
+    identityKeyB64: string,
+    safetyNumber: string
+  ): Promise<void> {
+    try {
+      const verdict = await checkAndPin(peerEmail, peerDeviceId, identityKeyB64, safetyNumber);
+      if (verdict.status === "changed") this.onIdentityChanged?.(peerEmail, peerDeviceId);
+    } catch {
+      // Storage failure must never block a message; the pin is a warning
+      // mechanism, not an authorisation one.
+    }
+  }
 
   async ensureIdentity(): Promise<DeviceIdentity> {
     if (this.identity) return this.identity;
@@ -115,10 +137,13 @@ export class SessionManager {
     );
 
     const myRaw = await crypto.subtle.exportKey("raw", identity.signingKeyPair.publicKey);
+    const safetyNumber = await computeIdentitySafetyNumber(myRaw, base64Decode(bundle.identity_key));
+    await this.pin(peerEmail, peerDeviceId, bundle.identity_key, safetyNumber);
+
     const fresh: CachedSession = {
       ratchet,
       pendingInit: initialMessage,
-      safetyNumber: await computeIdentitySafetyNumber(myRaw, base64Decode(bundle.identity_key)),
+      safetyNumber,
     };
     this.sessions.set(key, fresh);
     await this.persist(key, fresh);
@@ -189,14 +214,13 @@ export class SessionManager {
         associatedData
       );
       const myRaw = await crypto.subtle.exportKey("raw", identity.signingKeyPair.publicKey);
-      cached = {
-        ratchet,
-        pendingInit: null,
-        safetyNumber: await computeIdentitySafetyNumber(
-          myRaw,
-          base64Decode(envelope.x3dhInit.identity_key)
-        ),
-      };
+      const safetyNumber = await computeIdentitySafetyNumber(
+        myRaw,
+        base64Decode(envelope.x3dhInit.identity_key)
+      );
+      await this.pin(fromEmail, fromDeviceId, envelope.x3dhInit.identity_key, safetyNumber);
+
+      cached = { ratchet, pendingInit: null, safetyNumber };
       this.sessions.set(key, cached);
     }
 

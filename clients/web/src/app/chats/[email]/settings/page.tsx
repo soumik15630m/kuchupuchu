@@ -10,6 +10,8 @@ import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { deleteGroup, getGroup, isGroupId, saveGroup, type Group } from "@/lib/groups";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { clearChat } from "@/lib/messaging/store";
+import { acknowledgePin, pinsFor, type IdentityPin } from "@/lib/crypto/identity-pins";
+import { isGroupId as isGroup } from "@/lib/groups";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { useTheme } from "@/lib/theme/ThemeProvider";
 
@@ -27,6 +29,7 @@ export default function ChatSettingsPage() {
   const [name, setName] = useState(email);
   const [group, setGroup] = useState<Group | null>(null);
   const [cleared, setCleared] = useState(false);
+  const [pins, setPins] = useState<IdentityPin[]>([]);
 
   useEffect(() => {
     if (isGroupId(email)) {
@@ -37,6 +40,11 @@ export default function ChatSettingsPage() {
     }
     setName(nameFor(email));
   }, [email, nameFor]);
+
+  useEffect(() => {
+    if (isGroup(email)) return;
+    pinsFor(email).then(setPins);
+  }, [email]);
 
   function renameGroup() {
     if (!group) return;
@@ -88,6 +96,46 @@ export default function ChatSettingsPage() {
                 <p className={themeStyles.hint}>
                   Every member gets their own encrypted copy of each message. The server never
                   learns this group exists.
+                </p>
+              </div>
+            </>
+          )}
+
+          {pins.length > 0 && (
+            <>
+              <div className={settingsStyles.divider} />
+              <div className={themeStyles.section}>
+                <h2 className={themeStyles.sectionTitle}>Security code</h2>
+                {pins.map((pin) => (
+                  <div key={pin.key} className={themeStyles.radio} style={{ cursor: "default" }}>
+                    <span className={themeStyles.radioLabel}>
+                      <span style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>
+                        {pin.safetyNumber}
+                      </span>
+                      <span className={themeStyles.radioNote}>
+                        {pin.acknowledgedAtMs
+                          ? "Verified"
+                          : `First seen ${new Date(pin.firstSeenAtMs).toLocaleDateString()}`}
+                      </span>
+                    </span>
+                    {!pin.acknowledgedAtMs && (
+                      <button
+                        type="button"
+                        className={themeStyles.reset}
+                        style={{ color: "var(--accent)" }}
+                        onClick={async () => {
+                          await acknowledgePin(pin.peerEmail, pin.peerDeviceId);
+                          setPins(await pinsFor(email));
+                        }}
+                      >
+                        Mark verified
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <p className={themeStyles.hint}>
+                  Read this aloud over a channel this app doesn&apos;t control — a phone call, or in
+                  person. If it ever changes, a warning appears in the chat.
                 </p>
               </div>
             </>

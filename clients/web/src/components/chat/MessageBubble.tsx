@@ -147,6 +147,19 @@ export function MessageBubble({
   const { email: myEmail } = useSession();
   const reactions = Object.entries(message.reactions ?? {});
 
+  if (message.kind === "system") {
+    return (
+      <div
+        className={styles.systemNotice}
+        data-kind={message.systemKind}
+        role={message.systemKind === "security-code-changed" ? "alert" : undefined}
+      >
+        <Icon name="shield" size={13} />
+        {message.body}
+      </div>
+    );
+  }
+
   if (message.deletedForEveryone) {
     return (
       <div className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in}`}>
