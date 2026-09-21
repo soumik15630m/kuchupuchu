@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
+import { CameraSheet } from "@/components/chat/CameraSheet";
 import { EmojiPicker } from "@/components/chat/EmojiPicker";
 import { GifStickerPicker } from "@/components/chat/GifStickerPicker";
 import { downloadGif, type Gif } from "@/lib/messaging/gifs";
@@ -23,6 +24,7 @@ export function Composer({
   editing,
   onEditDone,
   mentionables,
+  onShareContact,
 }: {
   target: ChatTarget;
   audience: string[];
@@ -32,6 +34,9 @@ export function Composer({
   onEditDone?: () => void;
   /** username (lowercase) -> email, for the @ autocomplete. */
   mentionables?: Map<string, string>;
+  /** Opens the member picker; the chat page owns it since it needs the
+   * directory and a sheet of its own. */
+  onShareContact?: () => void;
 }) {
   const { client } = useMessaging();
   const chatId = targetChatId(target);
@@ -41,6 +46,8 @@ export function Composer({
   const [error, setError] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
   const [showGifs, setShowGifs] = useState(false);
+  const [showAttach, setShowAttach] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordedMs, setRecordedMs] = useState(0);
 
@@ -122,13 +129,17 @@ export function Composer({
     setError(null);
     try {
       const isVideo = file.type.startsWith("video/");
+      const isImage = file.type.startsWith("image/");
+      // Anything that is not an image or video is a document: no compression,
+      // no thumbnail, and a card rather than a preview.
+      const isDocument = !isVideo && !isImage;
       let blob: Blob = file;
       let width: number | undefined;
       let height: number | undefined;
       let thumb: string | undefined;
       let durationMs: number | undefined;
 
-      if (file.type.startsWith("image/")) {
+      if (isImage) {
         const compressed = await compressImage(file);
         blob = compressed.blob;
         width = compressed.width;
@@ -147,7 +158,7 @@ export function Composer({
       updateChatSettings(chatId, { draft: "" });
       const { mediaId, key, iv } = await client.uploadMedia(audience, blob);
       await client.send(target, {
-        kind: "media",
+        kind: isDocument ? "file" : "media",
         body: caption,
         replyTo: quoted,
         media: {
@@ -218,6 +229,36 @@ export function Composer({
       setError(err instanceof Error ? err.message : "Couldn't fetch that GIF.");
       setBusy(false);
     }
+  }
+
+  async function shareLocation() {
+    if (!client) return;
+    if (!navigator.geolocation) {
+      setError("This browser cannot share a location.");
+      return;
+    }
+    setShowAttach(false);
+    setBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          await client.sendLocation(target, {
+            lat: position.coords.latitude,
+            lon: position.coords.longitude,
+            accuracyM: position.coords.accuracy,
+          });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Couldn't share your location.");
+        } finally {
+          setBusy(false);
+        }
+      },
+      () => {
+        setError("Location permission is needed to share where you are.");
+        setBusy(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
   }
 
   async function startRecording() {
@@ -378,6 +419,63 @@ export function Composer({
         </div>
       )}
 
+      {showAttach && (
+        <>
+          <button
+            type="button"
+            className={styles.menuBackdrop}
+            aria-label="Close attach menu"
+            onClick={() => setShowAttach(false)}
+          />
+          <div className={styles.attachMenu} role="menu">
+            <button
+              type="button"
+              className={styles.attachOption}
+              onClick={() => {
+                setShowAttach(false);
+                setShowCamera(true);
+              }}
+            >
+              <Icon name="video" size={20} />
+              Camera
+            </button>
+            <button
+              type="button"
+              className={styles.attachOption}
+              onClick={() => {
+                setShowAttach(false);
+                fileRef.current?.click();
+              }}
+            >
+              <Icon name="attach" size={20} />
+              Photo, video or document
+            </button>
+            <button type="button" className={styles.attachOption} onClick={shareLocation}>
+              <Icon name="status" size={20} />
+              Location
+            </button>
+            <button
+              type="button"
+              className={styles.attachOption}
+              onClick={() => {
+                setShowAttach(false);
+                onShareContact?.();
+              }}
+            >
+              <Icon name="chats" size={20} />
+              Contact
+            </button>
+          </div>
+        </>
+      )}
+
+      {showCamera && (
+        <CameraSheet
+          onClose={() => setShowCamera(false)}
+          onCapture={(file) => void sendAttachment(file)}
+        />
+      )}
+
       <div className={styles.composer}>
         {recording ? (
           <div className={styles.recording}>
@@ -442,8 +540,12 @@ export function Composer({
             <button
               type="button"
               className={styles.composerIcon}
-              aria-label="Attach a photo or video"
-              onClick={() => fileRef.current?.click()}
+              aria-label="Attach"
+              onClick={() => {
+                setShowAttach((v) => !v);
+                setShowEmoji(false);
+                setShowGifs(false);
+              }}
               disabled={busy}
             >
               <Icon name="attach" size={20} />
@@ -469,7 +571,7 @@ export function Composer({
       <input
         ref={fileRef}
         type="file"
-        accept="image/*,video/*"
+        accept="*/*"
         className="visually-hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];

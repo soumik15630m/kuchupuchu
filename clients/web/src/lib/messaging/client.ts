@@ -29,6 +29,9 @@ interface Content {
     | "media"
     | "voice"
     | "sticker"
+    | "file"
+    | "location"
+    | "contact"
     | "status"
     | "reaction"
     | "deletion"
@@ -42,6 +45,12 @@ interface Content {
   /** Present on every group message. A recipient learns the group from this
    * rather than from a separate invite exchange. */
   group?: GroupRef;
+  /** Set on `location`. Coordinates only — no map tile is fetched, which
+   * would tell a tile server where both people are. */
+  location?: { lat: number; lon: number; accuracyM?: number };
+  /** Set on `contact`: a member card, so sharing someone does not require
+   * the recipient to already know their handle. */
+  contact?: { email: string; username: string | null; displayName: string | null };
   sentAtMs: number;
 }
 
@@ -298,10 +307,12 @@ export class MessagingClient {
       chatId: content.group ? content.group.id : wire.from_email,
       fromEmail: wire.from_email,
       outgoing: false,
-      kind: content.kind,
+      kind: content.kind as StoredMessage["kind"],
       body: content.body,
       media: content.media,
       replyTo: content.replyTo,
+      location: content.location,
+      contact: content.contact,
       sentAtMs,
       status: "delivered",
     };
@@ -442,6 +453,8 @@ export class MessagingClient {
       body: content.body,
       media: content.media,
       replyTo: content.replyTo,
+      location: content.location,
+      contact: content.contact,
       sentAtMs,
       status: "sending",
       recipients:
@@ -474,7 +487,12 @@ export class MessagingClient {
         client_msg_id: clientMsgId,
         // The server understands only text/media/voice; anything else rides as
         // text because its real kind is inside the ciphertext.
-        kind: content.kind === "media" || content.kind === "voice" ? content.kind : "text",
+        kind:
+          content.kind === "media" || content.kind === "voice" || content.kind === "file"
+            ? content.kind === "file"
+              ? "media"
+              : content.kind
+            : "text",
         recipients: targets,
       });
 
@@ -695,6 +713,20 @@ export class MessagingClient {
       }
     }
     return sent;
+  }
+
+  async sendLocation(
+    chat: ChatTarget,
+    position: { lat: number; lon: number; accuracyM?: number }
+  ): Promise<void> {
+    await this.send(chat, { kind: "location", body: "", location: position });
+  }
+
+  async sendContact(
+    chat: ChatTarget,
+    contact: { email: string; username: string | null; displayName: string | null }
+  ): Promise<void> {
+    await this.send(chat, { kind: "contact", body: "", contact });
   }
 
   async fetchMedia(media: MediaRef): Promise<Blob> {

@@ -33,10 +33,12 @@ export interface StoredMessage {
   chatId: string;
   fromEmail: string;
   outgoing: boolean;
-  kind: "text" | "media" | "voice" | "sticker" | "system";
+  kind: "text" | "media" | "voice" | "sticker" | "file" | "location" | "contact" | "system";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
+  location?: { lat: number; lon: number; accuracyM?: number };
+  contact?: { email: string; username: string | null; displayName: string | null };
   sentAtMs: number;
   status: MessageStatus;
   /** Who this was addressed to, excluding the sender's own devices, captured
@@ -192,6 +194,9 @@ export function searchableText(message: StoredMessage): string {
   if (body) return body;
   if (message.kind === "voice") return "voice note";
   if (message.kind === "sticker") return "sticker";
+  if (message.kind === "file") return message.media?.name ?? "document";
+  if (message.kind === "location") return "location";
+  if (message.kind === "contact") return message.contact?.username ?? "contact";
   if (message.kind === "media") return message.media?.name ?? "attachment";
   return "";
 }

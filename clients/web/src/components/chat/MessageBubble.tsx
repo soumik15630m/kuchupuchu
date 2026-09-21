@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
+import { FileAttachment } from "@/components/chat/FileAttachment";
 import { FormattedText } from "@/components/chat/FormattedText";
+import { ContactCard, LocationCard } from "@/components/chat/LocationCard";
+import { VoicePlayer } from "@/components/chat/VoicePlayer";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import type { StoredMessage } from "@/lib/messaging/store";
@@ -195,7 +198,10 @@ export function MessageBubble({
         {(message.kind === "media" || message.kind === "sticker") && (
           <MediaAttachment message={message} />
         )}
-        {message.kind === "voice" && <VoiceNote message={message} />}
+        {message.kind === "voice" && <VoicePlayer message={message} />}
+        {message.kind === "file" && <FileAttachment message={message} />}
+        {message.kind === "location" && <LocationCard message={message} />}
+        {message.kind === "contact" && <ContactCard message={message} />}
         {message.body && (
           <span className={styles.body}>
             <FormattedText body={message.body} mentionables={mentionables} selfEmail={myEmail} />

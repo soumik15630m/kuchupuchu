@@ -10,7 +10,7 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import styles from "@/components/chat/chat.module.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
-import { useDirectory } from "@/lib/directory/DirectoryProvider";
+import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
@@ -46,6 +46,7 @@ export default function ChatPage() {
   const [replyTo, setReplyTo] = useState<StoredMessage | null>(null);
   const [editing, setEditing] = useState<StoredMessage | null>(null);
   const [forwarding, setForwarding] = useState<StoredMessage | null>(null);
+  const [sharingContact, setSharingContact] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // Only people actually in this conversation can be mentioned.
@@ -231,11 +232,62 @@ export default function ChatPage() {
               editing={editing}
               onEditDone={() => setEditing(null)}
               mentionables={mentionables}
+              onShareContact={() => setSharingContact(true)}
             />
           ) : (
             <p className={styles.composerError}>This group is no longer on this device.</p>
           )}
         </div>
+
+        {sharingContact && (
+          <>
+            <button
+              type="button"
+              className={styles.menuBackdrop}
+              aria-label="Close"
+              onClick={() => setSharingContact(false)}
+            />
+            <div className={styles.forwardSheet} role="dialog" aria-label="Share a contact">
+              <div className={styles.forwardHeader}>
+                <strong>Share a contact</strong>
+                <button
+                  type="button"
+                  className={styles.emojiClose}
+                  onClick={() => setSharingContact(false)}
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className={styles.forwardList}>
+                {members.map((member) => (
+                  <button
+                    key={member.email}
+                    type="button"
+                    className={styles.forwardOption}
+                    onClick={async () => {
+                      setSharingContact(false);
+                      if (!chat.target) return;
+                      await client?.sendContact(chat.target, {
+                        email: member.email,
+                        username: member.username,
+                        displayName: member.displayName,
+                      });
+                    }}
+                  >
+                    <span className={styles.forwardAvatar}>{initialsFor(nameFor(member.email))}</span>
+                    <span>
+                      <span className={styles.forwardName}>{nameFor(member.email)}</span>
+                      <span className={styles.forwardSub}>
+                        {member.username ? `@${member.username}` : member.email}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
 
         {forwarding && (
           <ForwardSheet
