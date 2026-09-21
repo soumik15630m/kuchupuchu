@@ -4,6 +4,7 @@ import { ConnectionQuality } from "livekit-client";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Avatar } from "@/components/Avatar";
 import { Icon } from "@/components/Icon";
 import { VideoTile } from "@/components/call/VideoTile";
 import styles from "@/components/call/call.module.css";
@@ -159,7 +160,7 @@ export default function CallPage() {
       {stage === "failed" || stage === "ended" ? (
         <div className={styles.centre}>
           <div>
-            <div className={styles.centreAvatar}>{initialsFor(peerName)}</div>
+            <Avatar email={peerEmail} label={peerName} size={96} className={styles.centreAvatar} />
             <div className={styles.centreName}>{peerName}</div>
             <p className={styles.centreNote}>
               {stage === "failed" ? (state?.error ?? "The call couldn't be connected.") : "Call ended."}
@@ -172,7 +173,7 @@ export default function CallPage() {
       ) : ordered.length === 0 ? (
         <div className={styles.centre}>
           <div>
-            <div className={styles.centreAvatar}>{initialsFor(peerName)}</div>
+            <Avatar email={peerEmail} label={peerName} size={96} className={styles.centreAvatar} />
             <div className={styles.centreName}>{peerName}</div>
             <p className={styles.centreNote}>Ringing…</p>
           </div>

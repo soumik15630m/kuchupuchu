@@ -1,24 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { Avatar } from "@/components/Avatar";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { ApiError } from "@/lib/api/client";
 import { useSession } from "@/lib/auth/SessionProvider";
-import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
+import { useDirectory } from "@/lib/directory/DirectoryProvider";
+import { squareCrop } from "@/lib/messaging/media";
+import { useMessaging } from "@/lib/messaging/MessagingProvider";
 
 import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
 
 export default function ProfilePage() {
   const { session, email } = useSession();
-  const { me, refresh } = useDirectory();
+  const { me, others, refresh } = useDirectory();
+  const { client } = useMessaging();
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [about, setAbout] = useState("");
-  const [busy, setBusy] = useState<"username" | "profile" | null>(null);
+  const [busy, setBusy] = useState<"username" | "profile" | "photo" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -63,6 +68,25 @@ export default function ProfilePage() {
     }
   }
 
+  async function setPhoto(blob: Blob | null) {
+    if (!client) return;
+    setBusy("photo");
+    setError(null);
+    setSaved(null);
+    try {
+      await client.setAvatar(
+        others.map((m) => m.email),
+        blob ? await squareCrop(blob) : null
+      );
+      setSaved(blob ? "Photo updated." : "Photo removed.");
+    } catch {
+      setError("Couldn't update your photo.");
+    } finally {
+      setBusy(null);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   const label = displayName || username || email || "";
 
   return (
@@ -71,12 +95,51 @@ export default function ProfilePage() {
         <PaneHeader title="Profile" backHref="/settings" />
         <PaneScroll>
           <div className={settingsStyles.profile}>
-            <div className={settingsStyles.avatar}>{initialsFor(label)}</div>
+            <Avatar
+              email={email ?? ""}
+              label={label}
+              size={56}
+              className={settingsStyles.avatar}
+            />
             <div className={settingsStyles.who}>
               <div className={settingsStyles.name}>{label}</div>
               <div className={settingsStyles.email}>{email}</div>
+              <div style={{ display: "flex", gap: 14, marginTop: 4 }}>
+                <button
+                  type="button"
+                  className={themeStyles.reset}
+                  style={{ color: "var(--accent)", padding: 0 }}
+                  onClick={() => fileRef.current?.click()}
+                  disabled={busy !== null || !client}
+                >
+                  {busy === "photo" ? "Working…" : "Change photo"}
+                </button>
+                <button
+                  type="button"
+                  className={themeStyles.reset}
+                  style={{ color: "var(--danger)", padding: 0 }}
+                  onClick={() => setPhoto(null)}
+                  disabled={busy !== null || !client}
+                >
+                  Remove
+                </button>
+              </div>
             </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) setPhoto(file);
+              }}
+            />
           </div>
+          <p className={themeStyles.hint} style={{ padding: "0 16px" }}>
+            Your photo is encrypted and sent to each member individually — the server only ever
+            stores ciphertext, and never holds the key to it.
+          </p>
 
           {error && <p style={{ color: "var(--danger)", padding: "0 16px" }}>{error}</p>}
           {saved && <p style={{ color: "var(--ok)", padding: "0 16px" }}>{saved}</p>}

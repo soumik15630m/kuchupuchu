@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { Avatar } from "@/components/Avatar";
 import { Icon } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
@@ -209,7 +210,7 @@ export default function ChatsPage() {
                 className={styles.item}
                 onClick={() => router.push(`/chats/${encodeURIComponent(row.email)}`)}
               >
-                <span className={styles.avatar}>{initialsFor(row.name)}</span>
+                <Avatar email={row.email} label={row.name} size={49} className={styles.avatar} />
                 <span className={styles.itemBody}>
                   <span className={styles.itemTop}>
                     <span className={styles.itemName}>{row.name}</span>

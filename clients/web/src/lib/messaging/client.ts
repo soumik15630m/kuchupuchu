@@ -15,6 +15,7 @@ import {
   type StoredMessage,
 } from "./store";
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
+import { deleteAvatar, putAvatar } from "../directory/avatar-store";
 
 /** The plaintext inside an envelope. Everything user-visible lives here; the
  * server sees only the sealed form.
@@ -37,7 +38,8 @@ interface Content {
     | "deletion"
     | "status-view"
     | "edit"
-    | "group-update";
+    | "group-update"
+    | "profile";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -52,6 +54,9 @@ interface Content {
   /** Set on `contact`: a member card, so sharing someone does not require
    * the recipient to already know their handle. */
   contact?: { email: string; username: string | null; displayName: string | null };
+  /** Set on `profile`: the sender's avatar. Carried here rather than in the
+   * server-side profile because the ref includes the blob's decryption key. */
+  avatar?: MediaRef | null;
   sentAtMs: number;
 }
 
@@ -90,6 +95,8 @@ export interface MessagingEvents {
   onStatusPost: () => void;
   /** Queued messages went out after a reconnect. */
   onOutboxDrained: (count: number) => void;
+  /** A peer broadcast a new avatar. */
+  onProfileChanged: (email: string) => void;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -274,7 +281,8 @@ export class MessagingClient {
       content.kind === "deletion" ||
       content.kind === "status-view" ||
       content.kind === "edit" ||
-      content.kind === "group-update"
+      content.kind === "group-update" ||
+      content.kind === "profile"
     ) {
       await this.applyControl(content, wire.from_email);
       await this.acknowledge(wire.id);
@@ -324,6 +332,16 @@ export class MessagingClient {
   }
 
   private async applyControl(content: Content, fromEmail: string): Promise<void> {
+    if (content.kind === "profile") {
+      if (content.avatar) {
+        await putAvatar({ email: fromEmail, media: content.avatar, updatedAtMs: content.sentAtMs });
+      } else {
+        await deleteAvatar(fromEmail);
+      }
+      this.events.onProfileChanged(fromEmail);
+      return;
+    }
+
     if (content.kind === "group-update") {
       // The group metadata already merged in ingest(); this only records what
       // changed, so members see "X added Y" rather than silent edits.
@@ -745,6 +763,38 @@ export class MessagingClient {
     } catch {
       // Best effort: they find out when messages stop arriving.
     }
+  }
+
+  /** Publishes an avatar to everyone. The blob goes through the ordinary
+   * encrypted media path; only members in the audience can fetch it, and only
+   * this broadcast carries the key. */
+  async setAvatar(audience: string[], blob: Blob | null): Promise<MediaRef | null> {
+    let media: MediaRef | null = null;
+    if (blob) {
+      const { mediaId, key, iv } = await this.uploadMedia(audience, blob);
+      media = { mediaId, key, iv, mime: blob.type || "image/jpeg", byteSize: blob.size };
+      await putAvatar({ email: this.api.email, media, updatedAtMs: Date.now() });
+    } else {
+      await deleteAvatar(this.api.email);
+    }
+
+    const plaintext = encodeContent({
+      kind: "profile",
+      body: "",
+      avatar: media,
+      sentAtMs: Date.now(),
+    } satisfies Content);
+
+    const targets = await this.fanoutTargets(audience, plaintext);
+    if (targets.length > 0) {
+      await this.api.sendMessage({
+        client_msg_id: crypto.randomUUID(),
+        kind: "text",
+        recipients: targets,
+      });
+    }
+    this.events.onProfileChanged(this.api.email);
+    return media;
   }
 
   async sendLocation(

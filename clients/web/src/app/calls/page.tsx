@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { Avatar } from "@/components/Avatar";
 import { Icon } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
@@ -102,7 +103,7 @@ export default function CallsPage() {
               {rows.length === 0 && <PaneEmpty>No calls yet.</PaneEmpty>}
               {rows.map(({ record, label }) => (
                 <div key={record.id} className={styles.item}>
-                  <span className={styles.avatar}>{initialsFor(label)}</span>
+                  <Avatar email={record.chatId} label={label} size={49} className={styles.avatar} />
                   <span className={styles.itemBody}>
                     <span className={styles.itemTop}>
                       <span className={styles.itemName}>{label}</span>
@@ -135,7 +136,7 @@ export default function CallsPage() {
               {others.length === 0 && <PaneEmpty>No other members yet.</PaneEmpty>}
               {others.map((member) => (
                 <div key={member.email} className={styles.item}>
-                  <span className={styles.avatar}>{initialsFor(nameFor(member.email))}</span>
+                  <Avatar email={member.email} label={nameFor(member.email)} size={49} className={styles.avatar} />
                   <span className={styles.itemBody}>
                     <span className={styles.itemName}>{nameFor(member.email)}</span>
                     <span className={styles.itemPreview}>

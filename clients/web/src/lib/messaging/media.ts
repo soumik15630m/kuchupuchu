@@ -62,6 +62,33 @@ export async function compressImage(
   return { blob: blob ?? file, width, height };
 }
 
+/** Centre-cropped square for an avatar. Cropping here rather than in CSS means
+ * every surface that shows the photo gets the same framing, and the bytes on
+ * the wire are the ones actually displayed. */
+export async function squareCrop(file: Blob, edge = 512, quality = 0.85): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const sx = Math.round((bitmap.width - side) / 2);
+  const sy = Math.round((bitmap.height - side) / 2);
+  const size = Math.min(edge, side);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    bitmap.close();
+    return file;
+  }
+  ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, size, size);
+  bitmap.close();
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, "image/jpeg", quality)
+  );
+  return blob ?? file;
+}
+
 /** A tiny inline preview carried in the envelope itself, so a bubble can show
  * something immediately without a second round trip for the full blob. */
 export async function makeThumbnail(file: Blob, maxEdge = 160): Promise<string | undefined> {

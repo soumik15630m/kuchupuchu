@@ -2,11 +2,12 @@
 
 import { useRouter } from "next/navigation";
 
+import { Avatar } from "@/components/Avatar";
 import { Icon, type IconName } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { useSession } from "@/lib/auth/SessionProvider";
-import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
+import { useDirectory } from "@/lib/directory/DirectoryProvider";
 
 import styles from "./settings.module.css";
 
@@ -61,9 +62,12 @@ export default function SettingsPage() {
             style={{ width: "100%", textAlign: "left", color: "inherit" }}
             onClick={() => router.push("/settings/profile")}
           >
-            <div className={styles.avatar}>
-              {initialsFor(me?.displayName || me?.username || email || "?")}
-            </div>
+            <Avatar
+              email={email ?? ""}
+              label={me?.displayName || me?.username || email || "?"}
+              size={56}
+              className={styles.avatar}
+            />
             <div className={styles.who}>
               <div className={styles.name}>{me?.displayName || me?.username || "You"}</div>
               <div className={styles.email}>

@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { Avatar } from "@/components/Avatar";
 import { AppShell } from "@/components/shell/AppShell";
 import { WallpaperPicker } from "@/components/theme/WallpaperPicker";
 import { Pane, PaneHeader, PaneScroll } from "@/components/ui/Pane";
@@ -128,7 +129,7 @@ export default function ChatSettingsPage() {
         <PaneHeader title={name} subtitle="Chat settings" backHref={`/chats/${encodeURIComponent(email)}`} />
         <PaneScroll>
           <div className={settingsStyles.profile}>
-            <div className={settingsStyles.avatar}>{initialsFor(name)}</div>
+            <Avatar email={email} label={name} size={56} className={settingsStyles.avatar} />
             <div className={settingsStyles.who}>
               <div className={settingsStyles.name}>{name}</div>
               <div className={settingsStyles.email}>{email}</div>

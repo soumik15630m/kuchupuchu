@@ -3,6 +3,7 @@
 import { Track } from "livekit-client";
 import { useEffect, useRef } from "react";
 
+import { Avatar } from "@/components/Avatar";
 import { Icon } from "@/components/Icon";
 import { initialsFor } from "@/lib/directory/DirectoryProvider";
 import type { ParticipantView } from "@/lib/call/engine";
@@ -34,7 +35,12 @@ export function VideoTile({ participant, mirrored }: { participant: ParticipantV
           data-mirrored={mirrored ? "true" : undefined}
         />
       ) : (
-        <div className={styles.tileAvatar}>{initialsFor(participant.email)}</div>
+        <Avatar
+          email={participant.email}
+          label={participant.email}
+          size={72}
+          className={styles.tileAvatar}
+        />
       )}
 
       <div className={styles.tileLabel}>

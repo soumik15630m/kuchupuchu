@@ -23,6 +23,9 @@ interface MessagingContextValue {
   /** Bumped on every change so chat views can re-read their own slice
    * without every message landing in a single shared array. */
   revision: number;
+  /** Bumped when a peer's avatar changes, so avatars re-read without the
+   * whole chat list re-rendering on every incoming message. */
+  profileRevision: number;
   refreshChats: () => void;
   refreshStatuses: () => void;
 }
@@ -43,6 +46,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [chats, setChats] = useState<Map<string, ChatSummary>>(new Map());
   const [revision, setRevision] = useState(0);
+  const [profileRevision, setProfileRevision] = useState(0);
   const [typing, setTyping] = useState<TypingState>(emptyTyping);
   const [statuses, setStatuses] = useState<StatusReel[]>([]);
   // Entries carry their own expiry, so a single sweep replaces the per-sender
@@ -84,6 +88,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       onOutboxDrained: bump,
       onConnectionChange: setOnline,
       onTyping: (event) => setTyping((prev) => applyTyping(prev, event, Date.now())),
+      onProfileChanged: () => setProfileRevision((n) => n + 1),
     });
     clientRef.current = client;
 
@@ -124,10 +129,11 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       typing,
       statuses,
       revision,
+      profileRevision,
       refreshChats,
       refreshStatuses,
     }),
-    [online, ready, chats, typing, statuses, revision, refreshChats, refreshStatuses]
+    [online, ready, chats, typing, statuses, revision, profileRevision, refreshChats, refreshStatuses]
   );
 
   return <MessagingContext.Provider value={value}>{children}</MessagingContext.Provider>;

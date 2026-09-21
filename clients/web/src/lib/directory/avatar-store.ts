@@ -1,0 +1,79 @@
+import type { MediaRef } from "../messaging/store";
+
+/** Peer avatars, learned from encrypted profile broadcasts.
+ *
+ * The ref carries the blob's decryption key, which is exactly why it is not
+ * stored on the server alongside the profile: the directory is plaintext to
+ * the server, and putting the key there would let it decrypt every member's
+ * photo. Broadcasting it through the encrypted fan-out keeps the server
+ * holding ciphertext only.
+ */
+const DB_NAME = "kuchupuchu-avatars";
+const DB_VERSION = 1;
+const STORE = "avatars";
+
+export interface AvatarRecord {
+  email: string;
+  media: MediaRef;
+  updatedAtMs: number;
+  /** Cached decrypted bytes, so the list does not re-fetch on every render. */
+  blob?: Blob;
+}
+
+function openDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "email" });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest | void): Promise<T> {
+  return openDb().then(
+    (db) =>
+      new Promise<T>((resolve, reject) => {
+        const t = db.transaction(STORE, mode);
+        const req = fn(t.objectStore(STORE));
+        t.oncomplete = () => {
+          db.close();
+          resolve((req ? (req as IDBRequest).result : undefined) as T);
+        };
+        t.onerror = () => {
+          db.close();
+          reject(t.error);
+        };
+      })
+  );
+}
+
+export async function putAvatar(record: AvatarRecord): Promise<void> {
+  await run("readwrite", (s) => s.put(record));
+}
+
+export async function getAvatar(email: string): Promise<AvatarRecord | null> {
+  try {
+    return (await run<AvatarRecord | undefined>("readonly", (s) => s.get(email))) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function allAvatars(): Promise<AvatarRecord[]> {
+  try {
+    return (await run<AvatarRecord[]>("readonly", (s) => s.getAll())) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function deleteAvatar(email: string): Promise<void> {
+  try {
+    await run("readwrite", (s) => s.delete(email));
+  } catch {
+    // Cosmetic; a stale avatar is replaced on the next broadcast.
+  }
+}
