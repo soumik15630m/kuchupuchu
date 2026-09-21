@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { Session, clearSession, storedEmail, storedRefreshToken, type Tokens } from "../api/client";
+import { noteLocalOwner } from "./local-data";
 
 type Status = "loading" | "authenticated" | "anonymous";
 
@@ -39,6 +40,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setStatus("anonymous");
       return;
     }
+    // Stamps ownership on an install that predates the owner key, so the next
+    // sign-in does not read its data as unowned and wipe it.
+    noteLocalOwner(stored);
     sessionRef.current = new Session(stored, signOut);
     setEmail(stored);
     setStatus("authenticated");

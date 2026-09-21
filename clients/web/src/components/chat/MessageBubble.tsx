@@ -6,6 +6,7 @@ import { Icon } from "@/components/Icon";
 import { FileAttachment } from "@/components/chat/FileAttachment";
 import { FormattedText } from "@/components/chat/FormattedText";
 import { LinkPreviewCard } from "@/components/chat/LinkPreviewCard";
+import { blockSaveGestures, useScreenGuard } from "@/lib/privacy/useScreenGuard";
 import { ContactCard, LocationCard } from "@/components/chat/LocationCard";
 import { VoicePlayer } from "@/components/chat/VoicePlayer";
 import { useSession } from "@/lib/auth/SessionProvider";
@@ -137,20 +138,58 @@ function ViewOnceAttachment({
         <Icon name="image" size={15} />
         {loading ? "Opening…" : "Tap to view once"}
       </button>
-      {url && (
-        <div className={styles.viewOnceViewer} role="dialog" aria-label="View once photo">
-          {media.mime.startsWith("video/") ? (
-            <video src={url} controls autoPlay playsInline onEnded={close} />
-          ) : (
-            <img src={url} alt="" />
-          )}
-          <button type="button" onClick={close}>
-            Done
-          </button>
-          <p>Closing this removes it from your device. It cannot prevent a screenshot.</p>
-        </div>
-      )}
+      {url && <ViewOnceViewer url={url} mime={media.mime} onClose={close} />}
     </>
+  );
+}
+
+/** The photo itself, behind the screen guard.
+ *
+ * Concealment paints solid black rather than blurring, and it happens the
+ * moment the window loses focus -- which is what the OS snipping tools do
+ * when they start. On those paths the capture gets a black frame, the same
+ * end result as a DRM player, reached without a licence server holding the
+ * key. It is not the same guarantee: a recorder already running, or a phone
+ * pointed at the screen, still sees the photo, and the viewer says so. */
+function ViewOnceViewer({
+  url,
+  mime,
+  onClose,
+}: {
+  url: string;
+  mime: string;
+  onClose: () => void;
+}) {
+  const { concealed, reason, reveal } = useScreenGuard(true);
+  const frameRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => blockSaveGestures(frameRef.current), []);
+
+  return (
+    <div className={styles.viewOnceViewer} role="dialog" aria-label="View once photo">
+      <div ref={frameRef} className={styles.viewOnceFrame} data-concealed={concealed || undefined}>
+        {mime.startsWith("video/") ? (
+          <video src={url} controls autoPlay playsInline onEnded={onClose} draggable={false} />
+        ) : (
+          <img src={url} alt="" draggable={false} />
+        )}
+        {concealed && (
+          <button type="button" className={styles.viewOnceShield} onClick={reveal}>
+            {reason === "capture"
+              ? "Hidden — a screen capture was detected. Tap to show again."
+              : "Hidden while you were away. Tap to show again."}
+          </button>
+        )}
+      </div>
+      <button type="button" onClick={onClose}>
+        Done
+      </button>
+      <p>
+        Closing this removes it from your device. It blacks out when this window loses focus, so
+        the usual screenshot tools capture nothing — but it cannot stop a recorder that is already
+        running, or a camera pointed at the screen.
+      </p>
+    </div>
   );
 }
 

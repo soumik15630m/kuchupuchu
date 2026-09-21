@@ -1354,11 +1354,50 @@
   color: #fff;
 }
 
-.viewOnceViewer img,
-.viewOnceViewer video {
+.viewOnceFrame {
+  position: relative;
+  display: flex;
+  max-width: 100%;
+  max-height: 72vh;
+  background: #000;
+  /* Selection and the iOS long-press "save image" sheet are the two easiest
+     ways off the page; neither is security, both are worth closing. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.viewOnceFrame img,
+.viewOnceFrame video {
   max-width: 100%;
   max-height: 72vh;
   object-fit: contain;
+  pointer-events: none;
+}
+
+/* Painted over the photo rather than toggling its visibility: the element
+   stays laid out, so concealing cannot reflow the page and give away the
+   photo's dimensions, and there is no decode flash on reveal. */
+.viewOnceFrame[data-concealed] img,
+.viewOnceFrame[data-concealed] video {
+  visibility: hidden;
+}
+
+/* Scoped through the frame on purpose: `.viewOnceViewer button` sets the
+   accent colour and wins otherwise, which turned the blackout green. */
+.viewOnceFrame .viewOnceShield {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  border: none;
+  background: #000;
+  color: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
 }
 
 .viewOnceViewer button {
