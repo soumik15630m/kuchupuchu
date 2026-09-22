@@ -341,6 +341,29 @@ export class Session {
     return this.msgAuthed(`/media/${encodeURIComponent(mediaId)}`);
   }
 
+  /** Uploads the encrypted history backup, replacing any previous one. The
+   * body is ciphertext; the passphrase that produced it never leaves the
+   * device, so the server can store and return this but not read it. */
+  async uploadBackup(bytes: Uint8Array): Promise<BackupMeta> {
+    return this.msgAuthed("/backup", {
+      method: "PUT",
+      body: new Blob([bytes]),
+      headers: { "content-type": "application/octet-stream" },
+    });
+  }
+
+  backupMeta(): Promise<{ exists: boolean } & Partial<BackupMeta>> {
+    return this.msgAuthed("/backup/meta");
+  }
+
+  async downloadBackup(): Promise<Uint8Array> {
+    return new Uint8Array(await this.msgAuthed<ArrayBuffer>("/backup"));
+  }
+
+  deleteBackup(): Promise<{ deleted: boolean }> {
+    return this.msgAuthed("/backup", { method: "DELETE" });
+  }
+
   /** Link previews are fetched by our own server because no third party
    * sends CORS headers for its HTML. Only the sender does this; the result
    * is embedded in the encrypted envelope, so the recipient never contacts
@@ -370,6 +393,12 @@ export class Session {
 
 /** A member of the allowlist. `email` is the account identifier the protocol
  * addresses by; `username` is the handle people actually use. */
+export interface BackupMeta {
+  byteSize: number;
+  createdAt: string;
+  deviceId: string;
+}
+
 export interface LinkPreviewResponse {
   url: string;
   title: string | null;

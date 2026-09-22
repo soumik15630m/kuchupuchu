@@ -1,4 +1,5 @@
 import type { MediaRef } from "../messaging/store";
+import { openStore } from "../idb";
 
 /** Peer avatars, learned from encrypted profile broadcasts.
  *
@@ -21,14 +22,8 @@ export interface AvatarRecord {
 }
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "email" });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+  return openStore(DB_NAME, DB_VERSION, STORE, (db) => {
+    if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "email" });
   });
 }
 

@@ -33,6 +33,7 @@ from app.media import prune_expired as prune_media
 from app.messages import prune_expired as prune_messages
 from app.routers import media as media_router
 from app.routers import messages as messages_router
+from app.routers import backups as backups_router
 from app.routers import unfurl as unfurl_router
 
 logger = logging.getLogger(__name__)
@@ -71,13 +72,14 @@ if _origins:
         CORSMiddleware,
         allow_origins=_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["authorization", "content-type"],
     )
 
 app.include_router(messages_router.router)
 app.include_router(media_router.router, prefix="/media")
 app.include_router(unfurl_router.router, prefix="/unfurl")
+app.include_router(backups_router.router, prefix="/backup")
 
 
 @app.get("/healthz")

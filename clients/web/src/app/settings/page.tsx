@@ -110,6 +110,12 @@ export default function SettingsPage() {
             onClick={() => router.push("/settings/privacy")}
           />
           <Row
+            icon="image"
+            label="Chat backup"
+            note="Encrypted backup of your messages and media"
+            onClick={() => router.push("/settings/backup")}
+          />
+          <Row
             icon="shield"
             label="Linked devices"
             note="Review and revoke your devices"

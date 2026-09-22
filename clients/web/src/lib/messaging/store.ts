@@ -1,4 +1,5 @@
 import { RANK, applyReceipt } from "./receipts.mjs";
+import { openStore } from "../idb";
 
 export type MessageStatus = "sending" | "sent" | "delivered" | "read" | "failed";
 
@@ -114,17 +115,10 @@ const DB_VERSION = 1;
 const STORE = "messages";
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: "id" });
-        store.createIndex("chat", ["chatId", "sentAtMs"]);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+  return openStore(DB_NAME, DB_VERSION, STORE, (db) => {
+    if (db.objectStoreNames.contains(STORE)) return;
+    const store = db.createObjectStore(STORE, { keyPath: "id" });
+    store.createIndex("chat", ["chatId", "sentAtMs"]);
   });
 }
 

@@ -11,6 +11,7 @@ import { KUCHUPUCHU_DB_PREFIX, LOCAL_KEYS, decideLocalClaim } from "./local-clai
  * Firefox has no `databases()`, hence the list survives. */
 const KNOWN_DATABASES = [
   "kuchupuchu-messages",
+  "kuchupuchu-media-cache",
   "kuchupuchu-status",
   "kuchupuchu-avatars",
   "kuchupuchu-stickers",

@@ -1,6 +1,7 @@
 import type { Session, WireMessage } from "../api/client";
 import { getGroup, isGroupId, loadGroups, toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
 import { decryptBlob } from "./media";
+import { getCachedMedia, putCachedMedia } from "./media-cache";
 import { SessionManager, decodeContent, encodeContent, type MessageEnvelope } from "./sessions";
 import {
   addSystemNotice,
@@ -998,9 +999,15 @@ export class MessagingClient {
     await this.send(chat, { kind: "contact", body: "", contact });
   }
 
+  /** Cache first, because the server deletes blobs after seven days: for a
+   * restored history the cache is not an optimisation, it is the only copy. */
   async fetchMedia(media: MediaRef): Promise<Blob> {
+    const cached = await getCachedMedia(media.mediaId);
+    if (cached) return cached;
     const ciphertext = await this.api.downloadMedia(media.mediaId);
-    return decryptBlob(ciphertext, media.key, media.iv, media.mime);
+    const blob = await decryptBlob(ciphertext, media.key, media.iv, media.mime);
+    await putCachedMedia(media.mediaId, blob);
+    return blob;
   }
 
   /** `audience` must list every member allowed to download the blob; the
