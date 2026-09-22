@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 
 import { SessionProvider } from "@/lib/auth/SessionProvider";
+import { AutoBackup } from "@/components/shell/AutoBackup";
 import { LockGate } from "@/components/shell/LockGate";
 import { DirectoryProvider } from "@/lib/directory/DirectoryProvider";
 import { MessagingProvider } from "@/lib/messaging/MessagingProvider";
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <SessionProvider>
             <DirectoryProvider>
               <MessagingProvider>
+                <AutoBackup />
                 <LockGate>{children}</LockGate>
               </MessagingProvider>
             </DirectoryProvider>

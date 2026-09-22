@@ -6,13 +6,23 @@ import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { ApiError, type BackupMeta } from "@/lib/api/client";
 import { useSession } from "@/lib/auth/SessionProvider";
+import { forgetPassphrase, rememberPassphrase, storedCredential } from "@/lib/backup/credential";
+import { nextRunAtMs, type BackupFrequency, type BackupSettings } from "@/lib/backup/schedule.mjs";
 import { createBackup, restoreBackup, type BackupProgress } from "@/lib/backup/service";
+import { loadBackupSettings, saveBackupSettings } from "@/lib/backup/settings";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 
 import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
 
 const MIN_PASSPHRASE = 8;
+
+const FREQUENCY_OPTIONS: { label: string; value: BackupFrequency }[] = [
+  { label: "Off", value: "off" },
+  { label: "Daily", value: "daily" },
+  { label: "Weekly", value: "weekly" },
+  { label: "Monthly", value: "monthly" },
+];
 
 function sizeLabel(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -44,10 +54,13 @@ export default function BackupPage() {
   const { client, refreshChats } = useMessaging();
 
   const [meta, setMeta] = useState<({ exists: boolean } & Partial<BackupMeta>) | null>(null);
+  const [settings, setSettings] = useState<BackupSettings>(() => loadBackupSettings());
+  const [hasKey, setHasKey] = useState<boolean | null>(null);
+
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [restorePass, setRestorePass] = useState("");
-  const [busy, setBusy] = useState<"backup" | "restore" | "delete" | null>(null);
+  const [busy, setBusy] = useState<"save" | "backup" | "restore" | "delete" | "forget" | null>(null);
   const [progress, setProgress] = useState<BackupProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -62,8 +75,15 @@ export default function BackupPage() {
 
   useEffect(loadMeta, [loadMeta]);
 
-  async function runBackup() {
-    if (!session || !email) return;
+  useEffect(() => {
+    storedCredential().then((c) => setHasKey(Boolean(c)));
+  }, []);
+
+  function patchSettings(next: Partial<BackupSettings>) {
+    setSettings(saveBackupSettings(next));
+  }
+
+  async function savePassphrase() {
     setError(null);
     setNote(null);
     if (passphrase.length < MIN_PASSPHRASE) {
@@ -74,15 +94,50 @@ export default function BackupPage() {
       setError("The two passphrases don't match.");
       return;
     }
-    setBusy("backup");
+    setBusy("save");
     try {
-      const { byteSize } = await createBackup(session, client, email, passphrase, setProgress);
-      setNote(`Backed up ${sizeLabel(byteSize)}.`);
+      await rememberPassphrase(passphrase);
+      setHasKey(true);
       setPassphrase("");
       setConfirm("");
+      // A new passphrase means a new key, so whatever is on the server can no
+      // longer be opened with it. Clearing the success time makes the next
+      // scheduled run fire immediately rather than in a day's time.
+      patchSettings({ lastSuccessMs: null, lastError: null });
+      setNote("Passphrase saved on this device.");
+    } catch {
+      setError("That passphrase couldn't be saved.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runBackup() {
+    if (!session || !email) return;
+    setError(null);
+    setNote(null);
+    const credential = await storedCredential();
+    if (!credential) {
+      setError("Set a backup passphrase first.");
+      return;
+    }
+    setBusy("backup");
+    try {
+      const { byteSize } = await createBackup(
+        session,
+        client,
+        email,
+        credential,
+        { includeMedia: settings.includeMedia },
+        setProgress
+      );
+      patchSettings({ lastSuccessMs: Date.now(), lastAttemptMs: Date.now(), lastError: null });
+      setNote(`Backed up ${sizeLabel(byteSize)}.`);
       loadMeta();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "That backup couldn't be completed.");
+      const message = err instanceof ApiError ? err.message : "That backup couldn't be completed.";
+      patchSettings({ lastAttemptMs: Date.now(), lastError: message });
+      setError(message);
     } finally {
       setBusy(null);
       setProgress(null);
@@ -97,8 +152,10 @@ export default function BackupPage() {
     try {
       const result = await restoreBackup(session, restorePass, setProgress);
       setNote(
-        `Restored ${result.messages} message${result.messages === 1 ? "" : "s"}, ` +
-          `${result.media} media file${result.media === 1 ? "" : "s"}` +
+        `Restored ${result.messages} message${result.messages === 1 ? "" : "s"}` +
+          (result.includedMedia
+            ? `, ${result.media} media file${result.media === 1 ? "" : "s"}`
+            : " (this backup had no media)") +
           (result.skipped ? ` — ${result.skipped} already here.` : ".")
       );
       setRestorePass("");
@@ -111,6 +168,20 @@ export default function BackupPage() {
     }
   }
 
+  async function stopAutomatic() {
+    setBusy("forget");
+    setError(null);
+    setNote(null);
+    try {
+      await forgetPassphrase();
+      setHasKey(false);
+      patchSettings({ frequency: "off", lastError: null });
+      setNote("Automatic backup stopped and the passphrase removed from this device.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function runDelete() {
     if (!session) return;
     setBusy("delete");
@@ -118,6 +189,7 @@ export default function BackupPage() {
     setNote(null);
     try {
       await session.deleteBackup();
+      patchSettings({ lastSuccessMs: null });
       setNote("Backup deleted from the server.");
       loadMeta();
     } catch {
@@ -128,6 +200,7 @@ export default function BackupPage() {
   }
 
   const working = busy !== null;
+  const nextRun = nextRunAtMs(settings, Date.now());
 
   return (
     <AppShell pane="detail">
@@ -151,6 +224,20 @@ export default function BackupPage() {
                     ).toLocaleString()}.`
                   : "You don't have a backup yet."}
             </p>
+            {settings.lastError && (
+              <p className={themeStyles.hint} style={{ color: "var(--danger)" }}>
+                Last attempt failed: {settings.lastError}
+              </p>
+            )}
+            <button
+              className={themeStyles.reset}
+              style={{ color: "var(--accent)" }}
+              type="button"
+              onClick={runBackup}
+              disabled={working || !hasKey}
+            >
+              {busy === "backup" ? "Backing up…" : "Back up now"}
+            </button>
             {meta?.exists && (
               <button
                 className={themeStyles.reset}
@@ -167,7 +254,100 @@ export default function BackupPage() {
           <div className={settingsStyles.divider} />
 
           <div className={themeStyles.section}>
-            <h2 className={themeStyles.sectionTitle}>Back up now</h2>
+            <h2 className={themeStyles.sectionTitle}>Automatic backup</h2>
+            {hasKey === false ? (
+              <p className={themeStyles.hint}>
+                Set a passphrase below to turn on automatic backups.
+              </p>
+            ) : (
+              <>
+                <div className={themeStyles.options} role="radiogroup" aria-label="Backup frequency">
+                  {FREQUENCY_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.frequency === option.value}
+                      className={themeStyles.radio}
+                      disabled={working}
+                      onClick={() => {
+                        patchSettings({ frequency: option.value, lastError: null });
+                        setNote(
+                          option.value === "off"
+                            ? "Automatic backup is off."
+                            : `Backing up ${option.value}.`
+                        );
+                      }}
+                    >
+                      <span className={themeStyles.radioMark} />
+                      <span className={themeStyles.radioLabel}>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <p className={themeStyles.hint}>
+                  {settings.frequency === "off"
+                    ? "Backups only happen when you press Back up now."
+                    : nextRun && nextRun > Date.now()
+                      ? `Next backup around ${new Date(nextRun).toLocaleString()}.`
+                      : "Next backup will run shortly."}
+                  {settings.lastSuccessMs
+                    ? ` Last succeeded ${new Date(settings.lastSuccessMs).toLocaleString()}.`
+                    : ""}
+                </p>
+
+                <h2 className={themeStyles.sectionTitle} style={{ marginTop: 18 }}>
+                  What to include
+                </h2>
+                <div className={themeStyles.options} role="radiogroup" aria-label="What to include">
+                  {[
+                    { label: "Messages and media", value: true },
+                    { label: "Messages only", value: false },
+                  ].map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.includeMedia === option.value}
+                      className={themeStyles.radio}
+                      disabled={working}
+                      onClick={() => {
+                        patchSettings({ includeMedia: option.value });
+                        setNote("Saved.");
+                      }}
+                    >
+                      <span className={themeStyles.radioMark} />
+                      <span className={themeStyles.radioLabel}>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className={themeStyles.hint}>
+                  Photos, video and voice notes are much larger than the text around them. Leaving
+                  them out keeps backups small and quick, but a restore on a new device will show
+                  media as unavailable — the server deletes the originals after seven days.
+                </p>
+
+                <button
+                  className={themeStyles.reset}
+                  style={{ color: "var(--danger)" }}
+                  type="button"
+                  onClick={stopAutomatic}
+                  disabled={working}
+                >
+                  {busy === "forget"
+                    ? "Stopping…"
+                    : "Stop automatic backup and forget the passphrase"}
+                </button>
+              </>
+            )}
+          </div>
+
+          <div className={settingsStyles.divider} />
+
+          <div className={themeStyles.section}>
+            <h2 className={themeStyles.sectionTitle}>
+              {hasKey ? "Change passphrase" : "Backup passphrase"}
+            </h2>
             <div className={themeStyles.customRow} style={{ marginTop: 0 }}>
               <input
                 className={themeStyles.hexInput}
@@ -194,19 +374,21 @@ export default function BackupPage() {
               className={themeStyles.reset}
               style={{ color: "var(--accent)" }}
               type="button"
-              onClick={runBackup}
+              onClick={savePassphrase}
               disabled={working}
             >
-              {busy === "backup" ? "Backing up…" : "Back up messages and media"}
+              {busy === "save" ? "Saving…" : hasKey ? "Change passphrase" : "Save passphrase"}
             </button>
             <p className={themeStyles.hint}>
-              Your chats and media are encrypted on this device before they are uploaded. The
-              server stores the result and can tell you how big it is, but cannot read any of it.
+              The key is derived here and kept on this device so scheduled backups can run without
+              asking again. The passphrase itself is never stored and never uploaded — the server
+              holds ciphertext it cannot read.
             </p>
             <p className={themeStyles.hint}>
-              <strong>There is no way to recover this passphrase.</strong> It is never sent
-              anywhere, so if you forget it the backup is permanently unreadable — by us, by you,
-              by anyone. Write it down somewhere safe.
+              <strong>There is no way to recover this passphrase.</strong> If you forget it the
+              backup is permanently unreadable — by us, by you, by anyone. Write it down somewhere
+              safe.
+              {hasKey ? " Changing it means the next backup replaces the one on the server." : ""}
             </p>
           </div>
 

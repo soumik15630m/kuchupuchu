@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { ApiError, requestOtp, verifyOtp } from "@/lib/api/client";
-import { claimLocalDataFor } from "@/lib/auth/local-data";
+import { claimLocalDataFor, resetDeviceIdentity } from "@/lib/auth/local-data";
 import { useSession } from "@/lib/auth/SessionProvider";
 
 import styles from "./login.module.css";
@@ -54,6 +54,16 @@ export default function LoginPage() {
       signIn(normalized, await verifyOtp(normalized, code.trim()));
       router.replace("/chats");
     } catch (err) {
+      // A revoked device id can never be reused, so retrying with the same
+      // one fails forever. Minting a fresh identity is the only way forward,
+      // and the member should not have to know that.
+      if (err instanceof ApiError && err.status === 403 && /revoked/i.test(err.message)) {
+        await resetDeviceIdentity();
+        setError("This device was revoked. A new device identity is ready — request a new code.");
+        setStep("email");
+        setCode("");
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "That didn't work. Try again.");
       setCode("");
       codeRef.current?.focus();

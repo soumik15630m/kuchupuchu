@@ -20,6 +20,7 @@ export const LOCAL_KEYS = [
   "kuchupuchu:unlocked-at",
   "kuchupuchu:notifications",
   "kuchupuchu:link-previews",
+  "kuchupuchu:backup-schedule",
 ];
 
 /**

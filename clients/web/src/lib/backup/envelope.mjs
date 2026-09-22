@@ -43,6 +43,22 @@ function subtle() {
   return c.subtle;
 }
 
+/** Derives the backup key. Exported because an automatic backup cannot ask
+ * for a passphrase: the key is derived once when the schedule is turned on,
+ * stored non-extractable, and reused. The salt is stored with it so the same
+ * key is reproducible from the passphrase on another device at restore time.
+ *
+ * Reusing one salt across a member's own backups is deliberate and safe -- a
+ * salt defends against precomputation across passwords, not across messages.
+ * The IV is what must never repeat, and that is random per seal. */
+export async function deriveBackupKey(passphrase, salt, iterations = PBKDF2_ITERATIONS) {
+  return deriveKey(passphrase, salt, iterations);
+}
+
+export function newBackupSalt() {
+  return globalThis.crypto.getRandomValues(new Uint8Array(SALT_BYTES));
+}
+
 async function deriveKey(passphrase, salt, iterations) {
   const material = await subtle().importKey(
     "raw",
@@ -66,9 +82,20 @@ async function deriveKey(passphrase, salt, iterations) {
  * @returns {Promise<Uint8Array>}
  */
 export async function sealBackup(plaintext, passphrase, iterations = PBKDF2_ITERATIONS) {
-  const salt = globalThis.crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const iv = globalThis.crypto.getRandomValues(new Uint8Array(IV_BYTES));
+  const salt = newBackupSalt();
   const key = await deriveKey(passphrase, salt, iterations);
+  return sealBackupWithKey(plaintext, key, salt, iterations);
+}
+
+/**
+ * @param {Uint8Array} plaintext
+ * @param {CryptoKey} key       from deriveBackupKey
+ * @param {Uint8Array} salt     the salt that key was derived from
+ * @param {number} iterations
+ * @returns {Promise<Uint8Array>}
+ */
+export async function sealBackupWithKey(plaintext, key, salt, iterations) {
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const ciphertext = new Uint8Array(
     await subtle().encrypt({ name: "AES-GCM", iv }, key, plaintext)
   );

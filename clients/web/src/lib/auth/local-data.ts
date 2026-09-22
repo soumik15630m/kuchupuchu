@@ -12,6 +12,7 @@ import { KUCHUPUCHU_DB_PREFIX, LOCAL_KEYS, decideLocalClaim } from "./local-clai
 const KNOWN_DATABASES = [
   "kuchupuchu-messages",
   "kuchupuchu-media-cache",
+  "kuchupuchu-backup-key",
   "kuchupuchu-status",
   "kuchupuchu-avatars",
   "kuchupuchu-stickers",
@@ -43,6 +44,24 @@ function hasExistingData(): boolean {
  * back in finds the same chats and the same device id -- and therefore the
  * same ratchet state. What this stops is a *different* member inheriting them.
  */
+/** Throws away this browser's device identity and mints a new one.
+ *
+ * A revoked device id can never be reused -- the server says so and is right
+ * to -- which left a member whose device had been revoked permanently stuck
+ * on the login screen, reading an error telling them to do something the app
+ * gave them no way to do. The ratchet state tied to the old identity is gone
+ * either way, so it goes too; history comes back from a backup or from
+ * another device.
+ */
+export async function resetDeviceIdentity(): Promise<string> {
+  localStorage.removeItem("kuchupuchu:device");
+  const fresh = deviceId();
+  await Promise.all(
+    ["kuchupuchu-e2ee", "kuchupuchu-ratchets"].map(dropDatabase)
+  );
+  return fresh;
+}
+
 export async function claimLocalDataFor(email: string): Promise<boolean> {
   const next = email.toLowerCase();
   const decision = decideLocalClaim({

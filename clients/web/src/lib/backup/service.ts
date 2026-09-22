@@ -8,7 +8,8 @@ import { getCachedMedia, putCachedMedia } from "../messaging/media-cache";
 import { allMessages, getMessage, putMessage, type StoredMessage } from "../messaging/store";
 
 import { packArchive, unpackArchive } from "./archive.mjs";
-import { openBackup, sealBackup } from "./envelope.mjs";
+import type { BackupCredential } from "./credential";
+import { openBackup, sealBackupWithKey } from "./envelope.mjs";
 
 export interface BackupProgress {
   stage: "collecting" | "media" | "encrypting" | "uploading" | "downloading" | "decrypting" | "writing";
@@ -22,6 +23,13 @@ export interface BackupManifest {
   messages: StoredMessage[];
   groups: Group[];
   chatSettings: Record<string, ChatSettings>;
+  /** Recorded so a restore can say "no photos in this backup" rather than
+   * leaving the member wondering why their media is missing. */
+  includesMedia: boolean;
+}
+
+export interface BackupOptions {
+  includeMedia: boolean;
 }
 
 /** Collects this device's history, packs it with its media, encrypts it under
@@ -34,7 +42,8 @@ export async function createBackup(
   session: Session,
   client: MessagingClient | null,
   email: string,
-  passphrase: string,
+  credential: BackupCredential,
+  options: BackupOptions,
   onProgress?: (p: BackupProgress) => void
 ): Promise<{ byteSize: number }> {
   onProgress?.({ stage: "collecting" });
@@ -45,15 +54,18 @@ export async function createBackup(
     messages,
     groups: loadGroups(),
     chatSettings: loadChatSettings(),
+    includesMedia: options.includeMedia,
   };
 
   // One entry per distinct media id: the same blob can be referenced by a
   // forwarded copy in another chat, and packing it twice would double its
   // weight in the archive for nothing.
   const refs = new Map<string, StoredMessage["media"]>();
-  for (const message of messages) {
-    if (message.media?.mediaId && !refs.has(message.media.mediaId)) {
-      refs.set(message.media.mediaId, message.media);
+  if (options.includeMedia) {
+    for (const message of messages) {
+      if (message.media?.mediaId && !refs.has(message.media.mediaId)) {
+        refs.set(message.media.mediaId, message.media);
+      }
     }
   }
 
@@ -77,7 +89,12 @@ export async function createBackup(
   }
 
   onProgress?.({ stage: "encrypting" });
-  const sealed = await sealBackup(packArchive(manifest, blobs), passphrase);
+  const sealed = await sealBackupWithKey(
+    packArchive(manifest, blobs),
+    credential.key,
+    credential.salt,
+    credential.iterations
+  );
 
   onProgress?.({ stage: "uploading" });
   const meta = await session.uploadBackup(sealed);
@@ -89,6 +106,7 @@ export interface RestoreResult {
   media: number;
   groups: number;
   skipped: number;
+  includedMedia: boolean;
 }
 
 /** Downloads, decrypts and writes a backup into this device's stores.
@@ -141,5 +159,7 @@ export async function restoreBackup(
     media: blobs.size,
     groups: data.groups?.length ?? 0,
     skipped,
+    // Older backups predate the flag; blobs present implies media was kept.
+    includedMedia: data.includesMedia ?? blobs.size > 0,
   };
 }
