@@ -128,20 +128,51 @@ function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequ
       new Promise<T>((resolve, reject) => {
         const t = db.transaction(STORE, mode);
         const req = fn(t.objectStore(STORE));
-        t.oncomplete = () => {
-          db.close();
-          resolve((req ? (req as IDBRequest).result : undefined) as T);
-        };
-        t.onerror = () => {
-          db.close();
-          reject(t.error);
-        };
+        // The connection is cached and shared; closing it here would make
+        // every following operation reopen the database.
+        t.oncomplete = () => resolve((req ? (req as IDBRequest).result : undefined) as T);
+        t.onerror = () => reject(t.error);
       })
   );
 }
 
 export async function putMessage(message: StoredMessage): Promise<void> {
   await run("readwrite", (s) => s.put(message));
+}
+
+/** Writes many messages in one transaction, and reports which ids were
+ * already present so the caller does not have to ask first.
+ *
+ * A restore used to do a get and a put per message -- two transactions each,
+ * thousands of them for a real history. This is one transaction for the lot.
+ */
+export async function putMessagesMissing(
+  messages: StoredMessage[]
+): Promise<{ written: number; skipped: number }> {
+  if (messages.length === 0) return { written: 0, skipped: 0 };
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(STORE, "readwrite");
+    const store = t.objectStore(STORE);
+    let written = 0;
+    let skipped = 0;
+    for (const message of messages) {
+      // `add` rejects a duplicate key instead of overwriting, which is the
+      // merge rule a restore wants: what is already here is newer.
+      const req = store.add(message);
+      req.onsuccess = () => {
+        written += 1;
+      };
+      req.onerror = (event) => {
+        skipped += 1;
+        // Without this the failed add aborts the whole transaction.
+        event.preventDefault();
+        event.stopPropagation();
+      };
+    }
+    t.oncomplete = () => resolve({ written, skipped });
+    t.onerror = () => reject(t.error);
+  });
 }
 
 export async function getMessage(id: string): Promise<StoredMessage | null> {
@@ -264,14 +295,26 @@ export async function clearChat(chatId: string): Promise<void> {
   await Promise.all(messages.map((m) => deleteMessage(m.id)));
 }
 
+/** Rebuilds the chat list.
+ *
+ * Single pass, keeping the newest message per chat rather than sorting the
+ * whole store. This runs on every incoming message *and* every receipt, so a
+ * group of five turns one sent message into ten rebuilds -- an O(n log n)
+ * sort of every message ever exchanged, ten times, was the cost.
+ */
 export async function summaries(): Promise<Map<string, ChatSummary>> {
   const all = await allMessages();
   const byChat = new Map<string, ChatSummary>();
-  for (const message of all.sort((a, b) => a.sentAtMs - b.sentAtMs)) {
-    const existing = byChat.get(message.chatId) ?? { chatId: message.chatId, lastMessage: null, unread: 0 };
-    existing.lastMessage = message;
+  for (const message of all) {
+    let existing = byChat.get(message.chatId);
+    if (!existing) {
+      existing = { chatId: message.chatId, lastMessage: null, unread: 0 };
+      byChat.set(message.chatId, existing);
+    }
+    if (!existing.lastMessage || message.sentAtMs >= existing.lastMessage.sentAtMs) {
+      existing.lastMessage = message;
+    }
     if (!message.outgoing && message.status !== "read") existing.unread += 1;
-    byChat.set(message.chatId, existing);
   }
   return byChat;
 }

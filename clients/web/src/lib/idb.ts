@@ -15,7 +15,15 @@
  * reopened one version higher to force the upgrade path to run. That repair
  * leaves the database *above* the version in the source, which is why the
  * first open tolerates a newer database instead of treating it as an error.
+ *
+ * Connections are cached per database. They used to be opened and closed
+ * around every single get and put, which meant receiving one message cost
+ * several full open/close cycles and restoring a backup cost two per message.
+ * A cached handle has to give way when another tab upgrades the schema, hence
+ * the `versionchange` listener below.
  */
+const cache = new Map<string, Promise<IDBDatabase>>();
+
 function open(
   name: string,
   version: number | undefined,
@@ -31,7 +39,21 @@ function open(
   });
 }
 
-export async function openStore(
+function watch(name: string, db: IDBDatabase): IDBDatabase {
+  // Another tab cannot upgrade while this connection is open, so hold it only
+  // until asked to let go. Dropping the cache entry means the next call
+  // reopens rather than using a connection that is closing underneath it.
+  db.onversionchange = () => {
+    cache.delete(name);
+    db.close();
+  };
+  db.onclose = () => {
+    cache.delete(name);
+  };
+  return db;
+}
+
+async function openVerified(
   name: string,
   version: number,
   store: string,
@@ -47,7 +69,7 @@ export async function openStore(
     db = await open(name, undefined, upgrade);
   }
 
-  if (db.objectStoreNames.contains(store)) return db;
+  if (db.objectStoreNames.contains(store)) return watch(name, db);
 
   const next = db.version + 1;
   db.close();
@@ -56,5 +78,37 @@ export async function openStore(
     repaired.close();
     throw new Error(`${name} could not be repaired`);
   }
-  return repaired;
+  return watch(name, repaired);
+}
+
+export function openStore(
+  name: string,
+  version: number,
+  store: string,
+  upgrade: (db: IDBDatabase) => void
+): Promise<IDBDatabase> {
+  const existing = cache.get(name);
+  if (existing) return existing;
+
+  const opening = openVerified(name, version, store, upgrade).catch((err) => {
+    // A failed open must not be cached, or every later call replays the
+    // failure without ever retrying.
+    cache.delete(name);
+    throw err;
+  });
+  cache.set(name, opening);
+  return opening;
+}
+
+/** Drops the cached handle so a database can be deleted. `deleteDatabase`
+ * blocks indefinitely while any connection is open, which is exactly what a
+ * cache creates -- so the sign-out wipe has to call this first. */
+export function closeStore(name: string): void {
+  const entry = cache.get(name);
+  cache.delete(name);
+  entry?.then((db) => db.close()).catch(() => {});
+}
+
+export function closeAllStores(): void {
+  for (const name of [...cache.keys()]) closeStore(name);
 }

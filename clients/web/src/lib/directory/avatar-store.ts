@@ -33,14 +33,10 @@ function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequ
       new Promise<T>((resolve, reject) => {
         const t = db.transaction(STORE, mode);
         const req = fn(t.objectStore(STORE));
-        t.oncomplete = () => {
-          db.close();
-          resolve((req ? (req as IDBRequest).result : undefined) as T);
-        };
-        t.onerror = () => {
-          db.close();
-          reject(t.error);
-        };
+        // The connection is cached and shared; closing it here would make
+        // every following operation reopen the database.
+        t.oncomplete = () => resolve((req ? (req as IDBRequest).result : undefined) as T);
+        t.onerror = () => reject(t.error);
       })
   );
 }

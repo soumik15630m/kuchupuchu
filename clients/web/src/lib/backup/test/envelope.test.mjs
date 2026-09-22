@@ -80,12 +80,12 @@ test("an unknown kdf id is refused rather than guessed at", async () => {
 
 test("a full archive survives seal and open", async () => {
   const media = new Uint8Array(5000).map((_, i) => i % 256);
-  const packed = packArchive(
+  const packed = await packArchive(
     { email: "a@b.c", messages: [{ id: "1", body: "привет" }] },
     [{ id: "m1", mime: "image/jpeg", bytes: media }]
   );
   const sealed = await sealBackup(packed, "a long backup passphrase", FAST);
-  const { manifest, blobs } = unpackArchive(await openBackup(sealed, "a long backup passphrase"));
+  const { manifest, blobs } = await unpackArchive(await openBackup(sealed, "a long backup passphrase"));
   assert.equal(manifest.messages[0].body, "привет");
   assert.deepEqual([...blobs.get("m1").bytes], [...media]);
 });

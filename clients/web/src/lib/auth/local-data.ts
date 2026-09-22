@@ -1,4 +1,5 @@
 import { deviceId } from "../api/client";
+import { closeStore } from "../idb";
 
 import { KUCHUPUCHU_DB_PREFIX, LOCAL_KEYS, decideLocalClaim } from "./local-claim.mjs";
 
@@ -98,6 +99,10 @@ async function databasesToDrop(): Promise<string[]> {
 }
 
 function dropDatabase(name: string): Promise<void> {
+  // Connections are cached and held open, and deleteDatabase blocks for as
+  // long as any connection exists -- so the handle has to go first or the
+  // wipe silently does nothing.
+  closeStore(name);
   return new Promise((resolve) => {
     const req = indexedDB.deleteDatabase(name);
     req.onsuccess = () => resolve();

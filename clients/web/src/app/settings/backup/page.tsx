@@ -123,7 +123,7 @@ export default function BackupPage() {
     }
     setBusy("backup");
     try {
-      const { byteSize } = await createBackup(
+      const { byteSize, skipped } = await createBackup(
         session,
         client,
         email,
@@ -132,7 +132,11 @@ export default function BackupPage() {
         setProgress
       );
       patchSettings({ lastSuccessMs: Date.now(), lastAttemptMs: Date.now(), lastError: null });
-      setNote(`Backed up ${sizeLabel(byteSize)}.`);
+      setNote(
+        skipped
+          ? `Nothing has changed since the last backup — ${sizeLabel(byteSize)} left as it is.`
+          : `Backed up ${sizeLabel(byteSize)}.`
+      );
       loadMeta();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "That backup couldn't be completed.";

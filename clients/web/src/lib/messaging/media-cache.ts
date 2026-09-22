@@ -29,14 +29,10 @@ function run<T>(
       new Promise<T>((resolve, reject) => {
         const t = db.transaction(STORE, mode);
         const req = fn(t.objectStore(STORE));
-        t.oncomplete = () => {
-          db.close();
-          resolve((req ? (req as IDBRequest).result : undefined) as T);
-        };
-        t.onerror = () => {
-          db.close();
-          reject(t.error);
-        };
+        // The connection is cached and shared; closing it here would make
+        // every following operation reopen the database.
+        t.oncomplete = () => resolve((req ? (req as IDBRequest).result : undefined) as T);
+        t.onerror = () => reject(t.error);
       })
   );
 }
@@ -47,6 +43,28 @@ export async function putCachedMedia(id: string, blob: Blob): Promise<void> {
   } catch {
     // A full quota must not break sending or receiving; the cache is an
     // optimisation everywhere except restore, which reports its own failures.
+  }
+}
+
+/** Writes many blobs in one transaction. A restore used to open a
+ * transaction per photo. */
+export async function putCachedMediaBulk(
+  items: { id: string; blob: Blob }[]
+): Promise<void> {
+  if (items.length === 0) return;
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const t = db.transaction(STORE, "readwrite");
+      const store = t.objectStore(STORE);
+      const cachedAtMs = Date.now();
+      for (const item of items) store.put({ id: item.id, blob: item.blob, cachedAtMs });
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error);
+    });
+  } catch {
+    // Quota, most likely. The messages still restored; media shows as
+    // unavailable rather than the whole restore failing.
   }
 }
 

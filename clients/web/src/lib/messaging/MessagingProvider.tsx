@@ -53,15 +53,23 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   // timers this used to juggle.
   const typingSweep = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Coalesced: rebuilding the chat list reads every stored message, and a
+  // single group send produces a delivered and a read receipt per recipient.
+  // Without this, one message meant ten full rebuilds in a group of five.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshChats = useCallback(() => {
-    summaries()
-      .then((next) => {
-        setChats(next);
-        let unread = 0;
-        for (const summary of next.values()) unread += summary.unread;
-        setBadge(unread);
-      })
-      .catch(() => {});
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      summaries()
+        .then((next) => {
+          setChats(next);
+          let unread = 0;
+          for (const summary of next.values()) unread += summary.unread;
+          setBadge(unread);
+        })
+        .catch(() => {});
+    }, 120);
   }, []);
 
   const refreshStatuses = useCallback(() => {
@@ -114,6 +122,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       clientRef.current = null;
       setReady(false);
       setOnline(false);
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
       if (typingSweep.current) clearInterval(typingSweep.current);
       typingSweep.current = null;
       setTyping(emptyTyping());

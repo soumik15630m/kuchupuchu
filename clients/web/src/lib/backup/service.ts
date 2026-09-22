@@ -4,8 +4,8 @@ import type { Session } from "../api/client";
 import { loadGroups, toRef, upsertFromRef, type Group } from "../groups";
 import type { MessagingClient } from "../messaging/client";
 import { loadChatSettings, updateChatSettings, type ChatSettings } from "../messaging/chat-settings";
-import { getCachedMedia, putCachedMedia } from "../messaging/media-cache";
-import { allMessages, getMessage, putMessage, type StoredMessage } from "../messaging/store";
+import { getCachedMedia, putCachedMediaBulk } from "../messaging/media-cache";
+import { allMessages, putMessagesMissing, type StoredMessage } from "../messaging/store";
 
 import { packArchive, unpackArchive } from "./archive.mjs";
 import type { BackupCredential } from "./credential";
@@ -32,6 +32,27 @@ export interface BackupOptions {
   includeMedia: boolean;
 }
 
+/** Digest of the last archive this device uploaded.
+ *
+ * A daily backup on a quiet day would otherwise re-encrypt and re-push the
+ * entire history for a file identical to the one already on the server. On a
+ * link between India and Russia that is the expensive part, so the content is
+ * fingerprinted before the upload and skipped if it has not moved.
+ *
+ * The digest is over the *plaintext* archive, not the ciphertext: a fresh IV
+ * every seal means identical history produces different bytes every time,
+ * which is correct for encryption and useless for comparison. */
+const DIGEST_KEY = "kuchupuchu:backup-digest";
+
+/** Big enough that the transaction overhead disappears, small enough that
+ * progress still moves and one bad record cannot cost the whole restore. */
+const RESTORE_CHUNK = 250;
+
+async function digestOf(bytes: Uint8Array): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** Collects this device's history, packs it with its media, encrypts it under
  * the passphrase and uploads the ciphertext.
  *
@@ -45,7 +66,7 @@ export async function createBackup(
   credential: BackupCredential,
   options: BackupOptions,
   onProgress?: (p: BackupProgress) => void
-): Promise<{ byteSize: number }> {
+): Promise<{ byteSize: number; skipped?: boolean }> {
   onProgress?.({ stage: "collecting" });
   const messages = await allMessages();
   const manifest: BackupManifest = {
@@ -89,8 +110,19 @@ export async function createBackup(
   }
 
   onProgress?.({ stage: "encrypting" });
+  const packed = await packArchive(manifest, blobs);
+
+  // createdAtMs changes on every run, so it is excluded from the comparison
+  // or nothing would ever look unchanged.
+  const { createdAtMs: _ignored, ...stable } = manifest;
+  const fingerprint = await digestOf(await packArchive(stable, blobs));
+  if (typeof localStorage !== "undefined" && localStorage.getItem(DIGEST_KEY) === fingerprint) {
+    const existing = await session.backupMeta().catch(() => null);
+    if (existing?.exists) return { byteSize: existing.byteSize ?? 0, skipped: true };
+  }
+
   const sealed = await sealBackupWithKey(
-    packArchive(manifest, blobs),
+    packed,
     credential.key,
     credential.salt,
     credential.iterations
@@ -98,6 +130,7 @@ export async function createBackup(
 
   onProgress?.({ stage: "uploading" });
   const meta = await session.uploadBackup(sealed);
+  if (typeof localStorage !== "undefined") localStorage.setItem(DIGEST_KEY, fingerprint);
   return { byteSize: meta.byteSize };
 }
 
@@ -123,29 +156,30 @@ export async function restoreBackup(
   const sealed = await session.downloadBackup();
 
   onProgress?.({ stage: "decrypting" });
-  const { manifest, blobs } = unpackArchive(await openBackup(sealed, passphrase));
+  const { manifest, blobs } = await unpackArchive(await openBackup(sealed, passphrase));
   const data = manifest as unknown as BackupManifest;
 
-  onProgress?.({ stage: "writing", done: 0, total: data.messages?.length ?? 0 });
+  const incoming = data.messages ?? [];
+  onProgress?.({ stage: "writing", done: 0, total: incoming.length });
+
+  // One transaction per chunk rather than a get and a put per message. A
+  // 2000-message history was 4000 separate transactions before this.
   let restored = 0;
   let skipped = 0;
-  let index = 0;
-  for (const message of data.messages ?? []) {
-    index += 1;
-    if (index % 50 === 0) {
-      onProgress?.({ stage: "writing", done: index, total: data.messages.length });
-    }
-    if (await getMessage(message.id)) {
-      skipped += 1;
-      continue;
-    }
-    await putMessage(message);
-    restored += 1;
+  for (let i = 0; i < incoming.length; i += RESTORE_CHUNK) {
+    const chunk = incoming.slice(i, i + RESTORE_CHUNK);
+    const result = await putMessagesMissing(chunk);
+    restored += result.written;
+    skipped += result.skipped;
+    onProgress?.({ stage: "writing", done: i + chunk.length, total: incoming.length });
   }
 
-  for (const [mediaId, blob] of blobs) {
-    await putCachedMedia(mediaId, new Blob([blob.bytes], { type: blob.mime }));
-  }
+  await putCachedMediaBulk(
+    [...blobs].map(([mediaId, blob]) => ({
+      id: mediaId,
+      blob: new Blob([blob.bytes], { type: blob.mime }),
+    }))
+  );
 
   for (const group of data.groups ?? []) {
     upsertFromRef(toRef(group), data.email);

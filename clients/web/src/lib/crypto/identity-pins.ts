@@ -10,6 +10,7 @@
  * not a changed one, and conflating the two would cry wolf every time someone
  * adds a laptop.
  */
+import { openStore } from "../idb";
 
 const DB_NAME = "kuchupuchu-identity-pins";
 const DB_VERSION = 1;
@@ -32,14 +33,9 @@ function pinKey(peerEmail: string, peerDeviceId: string): string {
 }
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: "key" });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+  return openStore(DB_NAME, DB_VERSION, STORE, (db) => {
+    if (db.objectStoreNames.contains(STORE)) return;
+    db.createObjectStore(STORE, { keyPath: "key" });
   });
 }
 
@@ -49,14 +45,8 @@ function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequ
       new Promise<T>((resolve, reject) => {
         const t = db.transaction(STORE, mode);
         const req = fn(t.objectStore(STORE));
-        t.oncomplete = () => {
-          db.close();
-          resolve((req ? (req as IDBRequest).result : undefined) as T);
-        };
-        t.onerror = () => {
-          db.close();
-          reject(t.error);
-        };
+        t.oncomplete = () => resolve((req ? (req as IDBRequest).result : undefined) as T);
+        t.onerror = () => reject(t.error);
       })
   );
 }
