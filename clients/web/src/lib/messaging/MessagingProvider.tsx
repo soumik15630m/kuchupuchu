@@ -10,6 +10,8 @@ import { MessagingClient } from "./client";
 import { summaries, type ChatSummary, type StoredMessage } from "./store";
 import { statusReels, type StatusReel } from "./status-store";
 import { isMuted, settingsFor } from "./chat-settings";
+import { announceSyncedTheme, coerceTheme } from "../theme/storage";
+import { mentionedEmails } from "./formatting.mjs";
 import { applyTyping, emptyTyping, pruneTyping, TYPING_EXPIRY_MS, type TypingState } from "./typing.mjs";
 
 interface MessagingContextValue {
@@ -33,15 +35,41 @@ interface MessagingContextValue {
 
 const MessagingContext = createContext<MessagingContextValue | null>(null);
 
+/** Whether an incoming message @-mentions the signed-in member.
+ *
+ * `mentionedEmails` was implemented and unit-tested and then referenced by
+ * nothing, so being mentioned produced no notification, no badge and no
+ * override of a muted group. */
+function mentionsMe(
+  message: StoredMessage,
+  members: { email: string; username: string | null }[],
+  myEmail: string | null
+): boolean {
+  if (!myEmail || message.outgoing || !message.body) return false;
+  const mentionables = new Map<string, string>();
+  for (const member of members) {
+    if (member.username) mentionables.set(member.username.toLowerCase(), member.email);
+  }
+  return mentionedEmails(message.body, mentionables).some(
+    (e) => e.toLowerCase() === myEmail.toLowerCase()
+  );
+}
+
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
-  const { status, session } = useSession();
-  const { nameFor } = useDirectory();
+  const { status, session, email } = useSession();
+  const { nameFor, members } = useDirectory();
   // Held in a ref, not a dependency: the messaging client owns the WebSocket
   // and every ratchet session, so rebuilding it whenever a display name
   // changes would drop the connection and re-derive crypto state for a
   // cosmetic update.
   const nameForRef = useRef(nameFor);
   nameForRef.current = nameFor;
+  // Same reason as nameFor: the directory changes far more often than the
+  // messaging client should be rebuilt.
+  const membersRef = useRef(members);
+  membersRef.current = members;
+  const myEmailRef = useRef(email);
+  myEmailRef.current = email;
   const clientRef = useRef<MessagingClient | null>(null);
   const [online, setOnline] = useState(false);
   const [ready, setReady] = useState(false);
@@ -96,7 +124,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
     const client = new MessagingClient(session, deviceId(), {
       onMessage: (message) => {
-        notifyMessage(message, nameForRef.current(message.chatId));
+        notifyMessage(message, nameForRef.current(message.chatId), {
+          mentionsYou: mentionsMe(message, membersRef.current, myEmailRef.current),
+        });
         bump();
       },
       onStatus: bump,
@@ -105,6 +135,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       onConnectionChange: setOnline,
       onTyping: (event) => setTyping((prev) => applyTyping(prev, event, Date.now())),
       onProfileChanged: () => setProfileRevision((n) => n + 1),
+      onThemeReceived: (incoming) => announceSyncedTheme(coerceTheme(incoming)),
     });
     clientRef.current = client;
 

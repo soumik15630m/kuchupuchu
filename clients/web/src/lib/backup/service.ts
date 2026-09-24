@@ -44,6 +44,10 @@ export interface BackupOptions {
  * which is correct for encryption and useless for comparison. */
 const DIGEST_KEY = "kuchupuchu:backup-digest";
 
+/** Bumped when the fingerprint's inputs change, so an upgrade recomputes
+ * rather than trusting a digest computed a different way. */
+const DIGEST_VERSION = 2;
+
 /** Big enough that the transaction overhead disappears, small enough that
  * progress still moves and one bad record cannot cost the whole restore. */
 const RESTORE_CHUNK = 250;
@@ -109,17 +113,32 @@ export async function createBackup(
     }
   }
 
-  onProgress?.({ stage: "encrypting" });
-  const packed = await packArchive(manifest, blobs);
-
-  // createdAtMs changes on every run, so it is excluded from the comparison
-  // or nothing would ever look unchanged.
+  // Fingerprint before packing. This used to call packArchive a second time
+  // just to hash it, which doubled the CPU and the peak memory of the most
+  // expensive operation in the app -- to save an upload. Hashing the stable
+  // manifest plus the blob identities is equivalent: same messages, same
+  // groups, same settings and the same media means the same archive.
+  //
+  // createdAtMs is excluded or nothing would ever compare equal.
   const { createdAtMs: _ignored, ...stable } = manifest;
-  const fingerprint = await digestOf(await packArchive(stable, blobs));
+  const fingerprint = await digestOf(
+    new TextEncoder().encode(
+      JSON.stringify({
+        v: DIGEST_VERSION,
+        manifest: stable,
+        // Length as well as id: a blob re-uploaded under the same id with
+        // different bytes would otherwise look unchanged.
+        blobs: blobs.map((b) => [b.id, b.bytes.length]),
+      })
+    )
+  );
   if (typeof localStorage !== "undefined" && localStorage.getItem(DIGEST_KEY) === fingerprint) {
     const existing = await session.backupMeta().catch(() => null);
     if (existing?.exists) return { byteSize: existing.byteSize ?? 0, skipped: true };
   }
+
+  onProgress?.({ stage: "encrypting" });
+  const packed = await packArchive(manifest, blobs);
 
   const sealed = await sealBackupWithKey(
     packed,

@@ -235,6 +235,16 @@ export default function CallPage() {
         </div>
       )}
 
+      {state?.audioBlocked && (
+        <button
+          type="button"
+          className={styles.audioBlocked}
+          onClick={() => void engineRef.current?.startAudio()}
+        >
+          Your browser blocked the call audio. Tap to hear this call.
+        </button>
+      )}
+
       {stage !== "ended" && stage !== "failed" && (
         <div className={styles.controls}>
           <button

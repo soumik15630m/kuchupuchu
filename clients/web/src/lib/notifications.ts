@@ -34,7 +34,11 @@ export function preview(message: StoredMessage): string {
 
 /** Suppressed while the tab is visible — a notification for a message the
  * person is already looking at is just noise. */
-export function notifyMessage(message: StoredMessage, displayName: string): void {
+export function notifyMessage(
+  message: StoredMessage,
+  displayName: string,
+  options: { mentionsYou?: boolean } = {}
+): void {
   if (message.outgoing) return;
   // Generated locally for things this device observed; nobody sent them, and
   // an OS notification for "the security code changed" is startling noise.
@@ -43,17 +47,22 @@ export function notifyMessage(message: StoredMessage, displayName: string): void
   if (!notificationsAllowed()) return;
   // Muting a chat used to hide the unread pill and nothing else -- the
   // notification and the OS badge both ignored it.
-  if (isMuted(settingsFor(message.chatId))) return;
+  // A mention cuts through mute. Muting a busy group is how people cope with
+  // it; being unreachable in it is a different thing they did not ask for.
+  if (!options.mentionsYou && isMuted(settingsFor(message.chatId))) return;
 
   try {
-    const notification = new Notification(displayName, {
-      body: preview(message),
-      icon: "/icon.svg",
-      // Collapses repeat notifications from one chat into a single entry
-      // rather than stacking one per message.
-      tag: `chat:${message.chatId}`,
-      renotify: true,
-    } as NotificationOptions);
+    const notification = new Notification(
+      options.mentionsYou ? `${displayName} — mentioned you` : displayName,
+      {
+        body: preview(message),
+        icon: "/icon.svg",
+        // Collapses repeat notifications from one chat into a single entry
+        // rather than stacking one per message.
+        tag: `chat:${message.chatId}`,
+        renotify: true,
+      } as NotificationOptions
+    );
 
     notification.onclick = () => {
       window.focus();

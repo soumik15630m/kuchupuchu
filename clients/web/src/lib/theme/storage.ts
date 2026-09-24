@@ -2,6 +2,19 @@ import { DEFAULT_THEME, FONT_SCALES, type ThemeSettings } from "./types";
 
 export const THEME_STORAGE_KEY = "kuchupuchu:theme";
 
+/** Fired when a theme arrives from another of this member's devices.
+ *
+ * An event rather than a direct call because ThemeProvider wraps the session
+ * and messaging providers, so it cannot reach the messaging client -- and
+ * reordering the tree to make it possible would mean the whole app waits on
+ * a WebSocket before it can pick a colour. */
+export const THEME_SYNC_EVENT = "kuchupuchu:theme-synced";
+
+export function announceSyncedTheme(theme: ThemeSettings): void {
+  localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme));
+  window.dispatchEvent(new CustomEvent(THEME_SYNC_EVENT, { detail: theme }));
+}
+
 /** Never throws and never returns a partially-shaped object — a corrupt or
  * half-written value must degrade to defaults, not crash the shell before it
  * can render the settings screen that would let the user fix it. */

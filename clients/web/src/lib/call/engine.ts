@@ -53,6 +53,11 @@ export interface CallState {
   canSwitchCamera: boolean;
   rejoinNeeded: boolean;
   encrypted: boolean;
+  /** True when the browser refused to start audio without a gesture. The
+   * call is connected and the tracks are flowing; nothing can be heard until
+   * someone taps. Without surfacing it the failure is a silent call with no
+   * indication why. */
+  audioBlocked: boolean;
   startedAtMs: number | null;
 }
 
@@ -196,6 +201,7 @@ export class CallEngine {
     screenSharing: false,
     canSwitchCamera: false,
     rejoinNeeded: false,
+    audioBlocked: false,
     encrypted: false,
     startedAtMs: null,
   };
@@ -493,6 +499,11 @@ export class CallEngine {
     room.on(RoomEvent.TrackUnmuted, () => this.syncParticipants());
     room.on(RoomEvent.LocalTrackPublished, () => this.syncParticipants());
     room.on(RoomEvent.LocalTrackUnpublished, () => this.syncParticipants());
+    // Autoplay policy: a tab that has never been interacted with is not
+    // allowed to make noise. LiveKit reports it here rather than throwing.
+    room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+      this.patch({ audioBlocked: !room.canPlaybackAudio });
+    });
     room.on(RoomEvent.ActiveSpeakersChanged, () => this.syncParticipants());
 
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
@@ -660,6 +671,20 @@ export class CallEngine {
     this.disposed = true;
   }
 
+  /** Starts audio after a user gesture, for when autoplay was refused.
+   * Must be called from inside the event handler -- the permission is granted
+   * to the gesture, not to the page. */
+  async startAudio(): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    try {
+      await room.startAudio();
+      this.patch({ audioBlocked: !room.canPlaybackAudio });
+    } catch {
+      this.patch({ audioBlocked: true });
+    }
+  }
+
   attachRemoteAudio(container: HTMLElement): () => void {
     const room = this.room;
     if (!room) return () => {};
@@ -670,6 +695,9 @@ export class CallEngine {
       const el = track.attach();
       el.style.display = "none";
       container.appendChild(el);
+      // Reflects reality as soon as there is something to play: the event
+      // above does not fire if playback was already blocked before this.
+      this.patch({ audioBlocked: !room.canPlaybackAudio });
     };
 
     // LiveKit auto-subscribes during connect(), so by the time the UI mounts

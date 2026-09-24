@@ -54,7 +54,8 @@ interface Content {
     | "profile"
     | "history-request"
     | "history"
-    | "view-once-opened";
+    | "view-once-opened"
+    | "theme";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -72,6 +73,9 @@ interface Content {
   /** Set on `profile`: the sender's avatar. Carried here rather than in the
    * server-side profile because the ref includes the blob's decryption key. */
   avatar?: MediaRef | null;
+  /** Set on `theme`: display settings, mirrored to this account's own other
+   * devices. Never sent to anyone else. */
+  theme?: Record<string, unknown>;
   /** Set on `text`: a preview the sender resolved, so the recipient never
    * fetches the link themselves. */
   link?: LinkPreview;
@@ -128,6 +132,7 @@ export interface MessagingEvents {
   onOutboxDrained: (count: number) => void;
   /** A peer broadcast a new avatar. */
   onProfileChanged: (email: string) => void;
+  onThemeReceived: (theme: Record<string, unknown>) => void;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -325,7 +330,8 @@ export class MessagingClient {
       content.kind === "profile" ||
       content.kind === "history-request" ||
       content.kind === "history" ||
-      content.kind === "view-once-opened"
+      content.kind === "view-once-opened" ||
+      content.kind === "theme"
     ) {
       this.rememberControl(wire.client_msg_id);
       await this.applyControl(content, wire.from_email, wire.from_device);
@@ -428,6 +434,13 @@ export class MessagingClient {
       const updated = { ...message, viewedOnceAtMs: content.sentAtMs, media: undefined };
       await putMessage(updated);
       this.events.onStatus(updated);
+      return;
+    }
+
+    if (content.kind === "theme") {
+      // Own devices only. A peer has no business changing how this app looks.
+      if (fromEmail.toLowerCase() !== this.api.email.toLowerCase()) return;
+      if (content.theme) this.events.onThemeReceived(content.theme);
       return;
     }
 
@@ -799,6 +812,23 @@ export class MessagingClient {
     } catch {
       // A view receipt is not worth surfacing or retrying.
     }
+  }
+
+  /** Mirrors display settings to this account's other devices.
+   *
+   * Addressed to nobody: fanoutTargets always adds the sender's own devices,
+   * so an empty audience reaches exactly them and no one else. */
+  async syncTheme(theme: Record<string, unknown>): Promise<void> {
+    const targets = await this.fanoutTargets(
+      [],
+      encodeContent({ kind: "theme", body: "", theme, sentAtMs: Date.now() })
+    );
+    if (targets.length === 0) return;
+    await this.api.sendMessage({
+      client_msg_id: crypto.randomUUID(),
+      kind: "text",
+      recipients: targets,
+    });
   }
 
   /** Throws away the encrypted session with a peer device so the next message

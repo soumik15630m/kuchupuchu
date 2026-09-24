@@ -315,3 +315,23 @@
   color: var(--accent-ink);
   font-weight: 600;
 }
+
+/* Autoplay was refused: the call is live but silent until a gesture. Placed
+   above the controls rather than as a toast, because it is the one thing the
+   user must act on. */
+.audioBlocked {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  max-width: min(92vw, 420px);
+  padding: 11px 18px;
+  border: none;
+  border-radius: 20px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  z-index: 5;
+}

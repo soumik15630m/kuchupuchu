@@ -3,7 +3,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { applyTheme, resolveMode } from "./apply";
-import { readStoredTheme, writeStoredTheme } from "./storage";
+import {
+  readStoredTheme,
+  writeStoredTheme,
+  THEME_STORAGE_KEY,
+  THEME_SYNC_EVENT,
+} from "./storage";
 import { DEFAULT_THEME, type ThemeSettings, type Wallpaper } from "./types";
 
 interface ThemeContextValue {
@@ -41,17 +46,25 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => mq.removeEventListener("change", onChange);
   }, [theme]);
 
-  // Another tab changing the theme should not leave this one stale.
+  // Another tab changing the theme should not leave this one stale. The
+  // synced event covers the same ground for another *device*.
   useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key !== "kuchupuchu:theme") return;
+    const adopt = () => {
       const next = readStoredTheme();
       setThemeState(next);
       applyTheme(next);
       setResolvedMode(resolveMode(next.mode));
     };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== THEME_STORAGE_KEY) return;
+      adopt();
+    };
     addEventListener("storage", onStorage);
-    return () => removeEventListener("storage", onStorage);
+    addEventListener(THEME_SYNC_EVENT, adopt);
+    return () => {
+      removeEventListener("storage", onStorage);
+      removeEventListener(THEME_SYNC_EVENT, adopt);
+    };
   }, []);
 
   const commit = useCallback((next: ThemeSettings) => {
