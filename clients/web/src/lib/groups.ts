@@ -88,11 +88,38 @@ export function deleteGroup(id: string): void {
   writeAll(readAll().filter((g) => g.id !== id));
 }
 
-/** Merges the metadata on an inbound message. A stale copy must not undo a
- * newer edit, so a lower revision is ignored rather than applied. */
-export function upsertFromRef(ref: GroupRef, fallbackCreator: string): Group {
+/** Merges the metadata on an inbound message.
+ *
+ * `sender` is who the ref arrived from, and it is an authorisation check, not
+ * just a fallback for the creator field. Every group message carries the ref,
+ * so without this any member could raise the revision and rewrite the roster,
+ * the name, or `admins` -- including making themselves one. `isAdmin` only
+ * ever gated the local UI, which is not where the rule has to hold.
+ *
+ * A stale copy must not undo a newer edit either, so a lower revision is
+ * ignored rather than applied.
+ */
+export function upsertFromRef(
+  ref: GroupRef,
+  sender: string,
+  options: { trusted?: boolean } = {}
+): Group {
   const existing = getGroup(ref.id);
   if (existing && existing.revision >= ref.revision) return existing;
+
+  // `trusted` is for refs this device produced: a backup it wrote, or history
+  // from its own other device. Those are not someone else's claim about the
+  // group, and the member restoring them need not be an admin.
+  if (!options.trusted && existing && existing.admins.length > 0) {
+    const from = sender.toLowerCase();
+    if (!existing.admins.includes(from)) {
+      // A non-admin claiming a newer revision is either a bug on their side
+      // or an edit they were not entitled to make. Either way the local copy
+      // stands, and a genuine admin edit will arrive with its own revision.
+      console.warn(`groups: ignoring a ${ref.id} edit from non-admin ${from}`);
+      return existing;
+    }
+  }
 
   const merged: Group = {
     id: ref.id,
@@ -102,10 +129,10 @@ export function upsertFromRef(ref: GroupRef, fallbackCreator: string): Group {
     // the existing set is kept when the ref omits it.
     admins: ref.admins
       ? [...new Set(ref.admins.map((a) => a.toLowerCase()))].sort()
-      : existing?.admins ?? [fallbackCreator.toLowerCase()],
+      : existing?.admins ?? [sender.toLowerCase()],
     description: ref.description ?? existing?.description,
     avatar: ref.avatar ?? existing?.avatar,
-    createdBy: existing?.createdBy ?? fallbackCreator.toLowerCase(),
+    createdBy: existing?.createdBy ?? sender.toLowerCase(),
     createdAtMs: existing?.createdAtMs ?? Date.now(),
     revision: ref.revision,
   };

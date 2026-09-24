@@ -1,3 +1,4 @@
+import { isMuted, settingsFor } from "./messaging/chat-settings";
 import type { StoredMessage } from "./messaging/store";
 
 const ENABLED_KEY = "kuchupuchu:notifications";
@@ -28,9 +29,13 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 }
 
 export function preview(message: StoredMessage): string {
+  if (message.viewOnce) return "📷 Photo";
   if (message.kind === "voice") return "🎤 Voice note";
   if (message.kind === "sticker") return "🏷️ Sticker";
   if (message.kind === "media") return "📎 Attachment";
+  if (message.kind === "file") return `📄 ${message.media?.name ?? "Document"}`;
+  if (message.kind === "location") return "📍 Location";
+  if (message.kind === "contact") return "👤 Contact";
   return message.body;
 }
 
@@ -38,8 +43,14 @@ export function preview(message: StoredMessage): string {
  * person is already looking at is just noise. */
 export function notifyMessage(message: StoredMessage, displayName: string): void {
   if (message.outgoing) return;
+  // Generated locally for things this device observed; nobody sent them, and
+  // an OS notification for "the security code changed" is startling noise.
+  if (message.kind === "system") return;
   if (document.visibilityState === "visible") return;
   if (!notificationsAllowed()) return;
+  // Muting a chat used to hide the unread pill and nothing else -- the
+  // notification and the OS badge both ignored it.
+  if (isMuted(settingsFor(message.chatId))) return;
 
   try {
     const notification = new Notification(displayName, {

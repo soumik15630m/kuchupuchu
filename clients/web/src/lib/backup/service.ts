@@ -182,7 +182,7 @@ export async function restoreBackup(
   );
 
   for (const group of data.groups ?? []) {
-    upsertFromRef(toRef(group), data.email);
+    upsertFromRef(toRef(group), data.email, { trusted: true });
   }
   for (const [chatId, settings] of Object.entries(data.chatSettings ?? {})) {
     updateChatSettings(chatId, settings);

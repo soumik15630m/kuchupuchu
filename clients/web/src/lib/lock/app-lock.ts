@@ -155,7 +155,10 @@ export function shouldLock(nowMs = Date.now()): boolean {
   // ask again, which is the behaviour people expect from a lock.
   const unlockedAt = Number(sessionStorage.getItem(UNLOCKED_AT) ?? 0);
   if (!unlockedAt) return true;
-  if (config.autoLockMs === 0) return false;
+  // 0 means "lock as soon as you leave", so it is the strictest option, not
+  // an opt-out. Returning false here made it the *weakest* -- it only ever
+  // locked on a new tab.
+  if (config.autoLockMs === 0) return document.visibilityState !== "visible";
   return nowMs - unlockedAt > config.autoLockMs;
 }
 

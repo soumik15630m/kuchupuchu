@@ -33,8 +33,10 @@ export function LockGate({ children }: { children: React.ReactNode }) {
   // window has usually elapsed.
   useEffect(() => {
     const onVisible = () => {
+      // Only on the way back. Touching activity on the way *out* restarted
+      // the idle timer at exactly the moment it should have started counting,
+      // so the window never elapsed while the tab was hidden.
       if (document.visibilityState === "visible") setLocked(shouldLock());
-      else touchActivity();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);

@@ -3,8 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { ApiError, requestOtp, verifyOtp } from "@/lib/api/client";
-import { claimLocalDataFor, resetDeviceIdentity } from "@/lib/auth/local-data";
+import { ApiError, deviceId, requestOtp, verifyOtp } from "@/lib/api/client";
+import {
+  commitLocalClaim,
+  needsLocalWipe,
+  provisionalDeviceId,
+  resetDeviceIdentity,
+} from "@/lib/auth/local-data";
 import { useSession } from "@/lib/auth/SessionProvider";
 
 import styles from "./login.module.css";
@@ -47,11 +52,15 @@ export default function LoginPage() {
     setError(null);
     const normalized = email.trim().toLowerCase();
     try {
-      // Before the code is spent, not after: verifyOtp registers this
-      // browser's device id, and a member signing in after someone else needs
-      // a fresh one rather than inheriting a device that is not theirs.
-      await claimLocalDataFor(normalized);
-      signIn(normalized, await verifyOtp(normalized, code.trim()));
+      // Decide, then prove, then destroy -- in that order. A member signing in
+      // after someone else needs a device id of their own rather than
+      // inheriting one, but it is only registered and stored once the code has
+      // actually checked out.
+      const wipe = needsLocalWipe(normalized);
+      const device = wipe ? provisionalDeviceId() : deviceId();
+      const tokens = await verifyOtp(normalized, code.trim(), device);
+      await commitLocalClaim(normalized, { wipe, deviceId: device });
+      signIn(normalized, tokens);
       router.replace("/chats");
     } catch (err) {
       // A revoked device id can never be reused, so retrying with the same

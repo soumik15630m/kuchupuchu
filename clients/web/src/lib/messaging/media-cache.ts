@@ -77,6 +77,14 @@ export async function getCachedMedia(id: string): Promise<Blob | null> {
   }
 }
 
+export async function deleteCachedMedia(id: string): Promise<void> {
+  try {
+    await run("readwrite", (s) => s.delete(id));
+  } catch {
+    // Best effort; the ref is gone either way, so the blob is unreachable.
+  }
+}
+
 export async function cachedMediaIds(): Promise<string[]> {
   try {
     return (await run<string[]>("readonly", (s) => s.getAllKeys())) ?? [];

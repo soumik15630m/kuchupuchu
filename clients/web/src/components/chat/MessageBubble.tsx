@@ -121,6 +121,11 @@ function ViewOnceAttachment({
     try {
       const blob = await client.fetchMedia(media);
       setUrl(URL.createObjectURL(blob));
+      // Burned the moment it is shown, not when Done is pressed. Waiting for
+      // the button meant navigating away instead left the ref -- and the
+      // decryption key it carries -- intact, so the photo could be reopened
+      // indefinitely. The object URL above keeps this viewing alive.
+      onOpened?.(message);
     } catch {
       setLoading(false);
     }
@@ -129,7 +134,6 @@ function ViewOnceAttachment({
   function close() {
     if (url) URL.revokeObjectURL(url);
     setUrl(null);
-    onOpened?.(message);
   }
 
   return (

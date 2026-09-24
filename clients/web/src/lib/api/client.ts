@@ -144,10 +144,16 @@ export async function requestOtp(email: string): Promise<void> {
   await request("/otp/request", { method: "POST", body: JSON.stringify({ email }) });
 }
 
-export async function verifyOtp(email: string, code: string): Promise<Tokens> {
+/** `asDeviceId` lets the caller register a device id it has not stored yet,
+ * so a sign-in that turns out to be a typo leaves this browser untouched. */
+export async function verifyOtp(
+  email: string,
+  code: string,
+  asDeviceId?: string
+): Promise<Tokens> {
   return request<Tokens>("/otp/verify", {
     method: "POST",
-    body: JSON.stringify({ email, code, deviceId: deviceId(), platform: "web" }),
+    body: JSON.stringify({ email, code, deviceId: asDeviceId ?? deviceId(), platform: "web" }),
   });
 }
 

@@ -186,19 +186,43 @@ export class MessageRatchet {
       return plaintext;
     }
 
-    const currentDhr = s.dhrRaw ? base64Encode(s.dhrRaw) : null;
-    if (header.dh !== currentDhr) {
-      await this._skipMessageKeys(header.pn);
-      await this._dhRatchet(header);
+    // Trial decryption. Everything below advances the receiving chain, and
+    // the AEAD tag is not checked until the very last line -- so a message
+    // that fails to authenticate used to leave the chain one step ahead and
+    // every genuine message after it undecryptable. A redelivered envelope is
+    // enough to trigger it, and the server redelivers until acknowledged.
+    // The spec's answer is to work on a copy and keep it only on success.
+    const snapshot = {
+      rootKey: s.rootKey,
+      dhs: s.dhs,
+      dhrRaw: s.dhrRaw,
+      ckr: s.ckr,
+      cks: s.cks,
+      ns: s.ns,
+      nr: s.nr,
+      pn: s.pn,
+      // Copied, not referenced: _skipMessageKeys mutates this map in place.
+      skipped: new Map(s.skipped),
+    };
+
+    try {
+      const currentDhr = s.dhrRaw ? base64Encode(s.dhrRaw) : null;
+      if (header.dh !== currentDhr) {
+        await this._skipMessageKeys(header.pn);
+        await this._dhRatchet(header);
+      }
+      await this._skipMessageKeys(header.n);
+
+      if (!s.ckr) throw new Error("ratchet has no receiving chain for this message");
+      const { nextChainKey, messageKey } = await kdfChainStep(s.ckr);
+      s.ckr = nextChainKey;
+      s.nr += 1;
+
+      return await decrypt(messageKey, iv, ciphertext, ad);
+    } catch (err) {
+      Object.assign(s, snapshot);
+      throw err;
     }
-    await this._skipMessageKeys(header.n);
-
-    if (!s.ckr) throw new Error("ratchet has no receiving chain for this message");
-    const { nextChainKey, messageKey } = await kdfChainStep(s.ckr);
-    s.ckr = nextChainKey;
-    s.nr += 1;
-
-    return decrypt(messageKey, iv, ciphertext, ad);
   }
 
   async _skipMessageKeys(until) {

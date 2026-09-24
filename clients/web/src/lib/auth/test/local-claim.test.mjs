@@ -41,3 +41,15 @@ test("an empty owner string is treated as no owner, not as a member", () => {
   assert.equal(decideLocalClaim({ owner: "", next: "a@b.c", hasData: false }).wipe, false);
   assert.equal(decideLocalClaim({ owner: "", next: "a@b.c", hasData: true }).wipe, true);
 });
+
+test("the decision is the same whether or not it is acted on", () => {
+  // The rule is consulted once before authenticating and once after. Both
+  // calls must agree, or a sign-in could be judged safe and then wipe.
+  const input = { owner: "alice@example.com", next: "bob@example.com", hasData: true };
+  assert.deepEqual(decideLocalClaim(input), decideLocalClaim(input));
+  assert.deepEqual(input, {
+    owner: "alice@example.com",
+    next: "bob@example.com",
+    hasData: true,
+  }, "deciding must not mutate its input");
+});

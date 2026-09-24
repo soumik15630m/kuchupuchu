@@ -9,6 +9,7 @@ import { notifyMessage, setBadge } from "../notifications";
 import { MessagingClient } from "./client";
 import { summaries, type ChatSummary, type StoredMessage } from "./store";
 import { statusReels, type StatusReel } from "./status-store";
+import { isMuted, settingsFor } from "./chat-settings";
 import { applyTyping, emptyTyping, pruneTyping, TYPING_EXPIRY_MS, type TypingState } from "./typing.mjs";
 
 interface MessagingContextValue {
@@ -64,8 +65,15 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       summaries()
         .then((next) => {
           setChats(next);
+          // Muted and archived chats are excluded: the in-app pill already
+          // hides them, and an OS badge that disagrees with the list is worse
+          // than no badge. This was the other half of mute being cosmetic.
           let unread = 0;
-          for (const summary of next.values()) unread += summary.unread;
+          for (const summary of next.values()) {
+            const chat = settingsFor(summary.chatId);
+            if (chat.archived || isMuted(chat)) continue;
+            unread += summary.unread;
+          }
           setBadge(unread);
         })
         .catch(() => {});

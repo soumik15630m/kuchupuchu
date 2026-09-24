@@ -116,3 +116,44 @@ test("a ratchet for a different session cannot decrypt the message", async () =>
   const envelope = await alice.encrypt(text("secret"));
   await assert.rejects(() => strangerBob.decrypt(envelope));
 });
+
+test("a replayed message does not break the chain behind it", async () => {
+  const { alice, bob } = await pair();
+
+  const first = await alice.encrypt(text("one"));
+  assert.equal(read(await bob.decrypt(first)), "one");
+
+  // The server redelivers until acknowledged, so bob can genuinely see the
+  // same envelope twice. Before trial decryption this advanced his receiving
+  // chain past the real next message.
+  await assert.rejects(() => bob.decrypt(first));
+
+  const second = await alice.encrypt(text("two"));
+  assert.equal(read(await bob.decrypt(second)), "two", "the chain survived the replay");
+});
+
+test("a forged ciphertext does not break the chain behind it", async () => {
+  const { alice, bob } = await pair();
+
+  const forged = await alice.encrypt(text("tampered"));
+  const raw = Buffer.from(forged.ciphertext, "base64");
+  raw[0] ^= 0xff;
+  await assert.rejects(() => bob.decrypt({ ...forged, ciphertext: raw.toString("base64") }));
+
+  const genuine = await alice.encrypt(text("still fine"));
+  assert.equal(read(await bob.decrypt(genuine)), "still fine");
+});
+
+test("a replay across a dh ratchet step does not strand the session", async () => {
+  const { alice, bob } = await pair();
+
+  assert.equal(read(await bob.decrypt(await alice.encrypt(text("a")))), "a");
+  // Bob replies, which forces a dh ratchet on Alice's next send.
+  assert.equal(read(await alice.decrypt(await bob.encrypt(text("b")))), "b");
+
+  const afterRatchet = await alice.encrypt(text("c"));
+  assert.equal(read(await bob.decrypt(afterRatchet)), "c");
+  await assert.rejects(() => bob.decrypt(afterRatchet));
+
+  assert.equal(read(await bob.decrypt(await alice.encrypt(text("d")))), "d");
+});

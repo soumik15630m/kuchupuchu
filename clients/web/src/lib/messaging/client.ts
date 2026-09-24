@@ -1,7 +1,7 @@
 import type { Session, WireMessage } from "../api/client";
 import { getGroup, isGroupId, loadGroups, toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
 import { decryptBlob } from "./media";
-import { getCachedMedia, putCachedMedia } from "./media-cache";
+import { deleteCachedMedia, getCachedMedia, putCachedMedia } from "./media-cache";
 import { SessionManager, decodeContent, encodeContent, type MessageEnvelope } from "./sessions";
 import {
   addSystemNotice,
@@ -26,6 +26,8 @@ const HISTORY_ASKED_KEY = "kuchupuchu:history-asked";
 const HISTORY_WINDOW_MS = 180 * 24 * 60 * 60 * 1000;
 const HISTORY_MAX_MESSAGES = 2000;
 const HISTORY_BATCH = 40;
+
+const MAX_HANDLED_CONTROLS = 500;
 
 /** The plaintext inside an envelope. Everything user-visible lives here; the
  * server sees only the sealed form.
@@ -73,6 +75,10 @@ interface Content {
   /** Set on `text`: a preview the sender resolved, so the recipient never
    * fetches the link themselves. */
   link?: LinkPreview;
+  /** Who a direct message was addressed to. Only the sender's *own* other
+   * devices need it -- the peer already knows -- and it rides inside the
+   * ciphertext, so the server learns nothing it did not already route by. */
+  to?: string;
   /** Set on `media`: the attachment may be opened once, then it is gone. */
   viewOnce?: boolean;
   /** Set on `history`: a batch of this account's own past messages, sent
@@ -288,6 +294,14 @@ export class MessagingClient {
       await this.acknowledge(wire.id);
       return;
     }
+    // Control messages never reach the message store, so the check above
+    // cannot see them. start() runs connect() -- whose onopen triggers a
+    // server backlog -- and drainPending() concurrently, so the same pending
+    // reaction really can arrive twice during an ordinary startup.
+    if (this.handledControls.has(wire.client_msg_id)) {
+      await this.acknowledge(wire.id);
+      return;
+    }
 
     let content: Content;
     try {
@@ -313,6 +327,7 @@ export class MessagingClient {
       content.kind === "history" ||
       content.kind === "view-once-opened"
     ) {
+      this.rememberControl(wire.client_msg_id);
       await this.applyControl(content, wire.from_email, wire.from_device);
       await this.acknowledge(wire.id);
       return;
@@ -341,11 +356,22 @@ export class MessagingClient {
     // belongs to is known without the server ever learning the group exists.
     if (content.group) upsertFromRef(content.group, wire.from_email);
 
+    // fanoutTargets deliberately copies every message to this account's other
+    // devices, so some of what arrives here was sent by us. Without this it
+    // renders as an incoming, unread bubble -- and for a 1:1 it opens a
+    // phantom thread keyed by the member's own address.
+    const fromSelf = wire.from_email.toLowerCase() === this.api.email.toLowerCase();
+    const peerChatId = content.group
+      ? content.group.id
+      : fromSelf
+        ? (content.to ?? wire.from_email)
+        : wire.from_email;
+
     const stored: StoredMessage = {
       id: wire.client_msg_id,
-      chatId: content.group ? content.group.id : wire.from_email,
+      chatId: peerChatId,
       fromEmail: wire.from_email,
-      outgoing: false,
+      outgoing: fromSelf,
       kind: content.kind as StoredMessage["kind"],
       body: content.body,
       media: content.media,
@@ -355,7 +381,7 @@ export class MessagingClient {
       link: content.link,
       viewOnce: content.viewOnce,
       sentAtMs,
-      status: "delivered",
+      status: fromSelf ? "sent" : "delivered",
     };
     await putMessage(stored);
     this.events.onMessage(stored);
@@ -378,7 +404,9 @@ export class MessagingClient {
 
     if (content.kind === "history") {
       if (fromEmail.toLowerCase() !== this.api.email.toLowerCase()) return;
-      for (const ref of content.historyGroups ?? []) upsertFromRef(ref, this.api.email);
+      for (const ref of content.historyGroups ?? []) {
+        upsertFromRef(ref, this.api.email, { trusted: true });
+      }
       let added = 0;
       for (const message of content.history ?? []) {
         // A message this device already has wins: its read state and local
@@ -564,6 +592,20 @@ export class MessagingClient {
     }
   }
 
+  /** Client ids of control messages already applied this session.
+   *
+   * Bounded because it grows for the life of the connection and the window it
+   * guards is a startup race, not a long-lived one. */
+  private readonly handledControls = new Set<string>();
+
+  private rememberControl(clientMsgId: string): void {
+    this.handledControls.add(clientMsgId);
+    if (this.handledControls.size > MAX_HANDLED_CONTROLS) {
+      const oldest = this.handledControls.values().next().value;
+      if (oldest !== undefined) this.handledControls.delete(oldest);
+    }
+  }
+
   private async devicesFor(email: string): Promise<string[]> {
     const cached = this.deviceCache.get(email);
     // A peer adding a device mid-conversation must start receiving without a
@@ -629,7 +671,9 @@ export class MessagingClient {
     const body: Content = {
       ...content,
       sentAtMs,
-      ...(target.kind === "group" ? { group: toRef(target.group) } : {}),
+      ...(target.kind === "group"
+        ? { group: toRef(target.group) }
+        : { to: target.email }),
     };
 
     const stored: StoredMessage = {
@@ -753,6 +797,23 @@ export class MessagingClient {
     }
   }
 
+  /** Throws away the encrypted session with a peer device so the next message
+   * rebuilds it from a fresh X3DH.
+   *
+   * The recovery path for a chain that can no longer decrypt anything the
+   * peer sends -- they re-provisioned a device, or a bug desynced it. Until
+   * this was wired up, `SessionManager.reset` existed for exactly this case
+   * and nothing called it, so there was no way out from inside the app.
+   */
+  async resetSessionsWith(peerEmail: string): Promise<number> {
+    const devices = await this.devicesFor(peerEmail).catch(() => [] as string[]);
+    for (const device of devices) await this.sessions.reset(peerEmail, device);
+    // Forces a fresh device list on the next send rather than reusing the
+    // cached one this just invalidated sessions for.
+    this.deviceCache.delete(peerEmail.toLowerCase());
+    return devices.length;
+  }
+
   /** Burns a view-once attachment after it has been seen.
    *
    * The blob is dropped from this device first and the sender told second: if
@@ -763,6 +824,10 @@ export class MessagingClient {
     const viewedOnceAtMs = Date.now();
     const burned: StoredMessage = { ...message, viewedOnceAtMs, media: undefined };
     await putMessage(burned);
+    // The ref carries the decryption key and is gone now, but the decrypted
+    // blob is in the local cache -- and without this it survives there and
+    // rides into the next backup.
+    if (message.media?.mediaId) await deleteCachedMedia(message.media.mediaId);
     this.events.onStatus(burned);
     try {
       await this.send(chat, { kind: "view-once-opened", body: "", target: message.id, sentAtMs: viewedOnceAtMs });

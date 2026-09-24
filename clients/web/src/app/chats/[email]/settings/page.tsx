@@ -38,6 +38,8 @@ export default function ChatSettingsPage() {
   const [group, setGroup] = useState<Group | null>(null);
   const [cleared, setCleared] = useState(false);
   const [pins, setPins] = useState<IdentityPin[]>([]);
+  const [resetting, setResetting] = useState(false);
+  const [resetNote, setResetNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (isGroupId(email)) {
@@ -265,6 +267,42 @@ export default function ChatSettingsPage() {
                 <p className={themeStyles.hint}>
                   Read this aloud over a channel this app doesn&apos;t control — a phone call, or in
                   person. If it ever changes, a warning appears in the chat.
+                </p>
+              </div>
+            </>
+          )}
+
+          {!isGroup(email) && (
+            <>
+              <div className={settingsStyles.divider} />
+              <div className={themeStyles.section}>
+                <h2 className={themeStyles.sectionTitle}>Encrypted session</h2>
+                <button
+                  className={themeStyles.reset}
+                  style={{ color: "var(--danger)" }}
+                  type="button"
+                  disabled={resetting}
+                  onClick={async () => {
+                    setResetting(true);
+                    try {
+                      const count = await client?.resetSessionsWith(email);
+                      setResetNote(
+                        count
+                          ? `Session reset. The next message will set up encryption again.`
+                          : "No session to reset."
+                      );
+                    } finally {
+                      setResetting(false);
+                    }
+                  }}
+                >
+                  {resetting ? "Resetting…" : "Reset encrypted session"}
+                </button>
+                {resetNote && <p className={themeStyles.hint}>{resetNote}</p>}
+                <p className={themeStyles.hint}>
+                  Only if messages from this person stop decrypting — after they reinstall, or set
+                  up a new device. Their security code will change, and past messages already on
+                  this device are unaffected.
                 </p>
               </div>
             </>
