@@ -330,15 +330,29 @@ export class CallEngine {
       const connectOptions = {
         rtcConfig: { iceServers: iceServersFrom(grant.turnCredentials) },
       };
-      await Promise.race([
-        room.connect(grant.livekitUrl, grant.roomToken, connectOptions),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("connect() did not resolve in 20s — likely stuck in ICE gathering")),
-            CONNECT_TIMEOUT_MS
-          )
-        ),
-      ]);
+      // The losing side of a race still settles. Without this catch, a
+      // connect() that eventually rejects after the timeout has already
+      // fired surfaces as an unhandled rejection.
+      const connecting = room
+        .connect(grant.livekitUrl, grant.roomToken, connectOptions)
+        .catch((err) => {
+          if (this.state.stage === "failed") return;
+          throw err;
+        });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          connecting,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("connect() did not resolve in 20s — likely stuck in ICE gathering")),
+              CONNECT_TIMEOUT_MS
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
       this.patch({ stage: "failed", error: err instanceof Error ? err.message : "Connection failed." });
       return;
@@ -396,7 +410,7 @@ export class CallEngine {
     const next = !this.state.screenSharing;
     try {
       await room.localParticipant.setScreenShareEnabled(next, { audio: true });
-      this.patch({ screenSharing: next });
+      this.patch({ screenSharing: next, error: null });
     } catch (err) {
       // The browser picker being dismissed throws; that is a cancel, not a
       // failure worth showing.
@@ -563,8 +577,14 @@ export class CallEngine {
     const room = this.room;
     if (!room) return;
     const next = !this.state.micEnabled;
-    await room.localParticipant.setMicrophoneEnabled(next);
-    this.patch({ micEnabled: next });
+    try {
+      await room.localParticipant.setMicrophoneEnabled(next);
+      this.patch({ micEnabled: next, error: null });
+    } catch (err) {
+      // A device unplugged mid-call, or permission revoked. Unhandled, this
+      // left the button showing a state the track was not actually in.
+      this.patch({ error: err instanceof Error ? err.message : "Couldn't switch the microphone." });
+    }
     this.syncParticipants();
   }
 
@@ -572,8 +592,12 @@ export class CallEngine {
     const room = this.room;
     if (!room || this.state.audioOnly) return;
     const next = !this.state.cameraEnabled;
-    await room.localParticipant.setCameraEnabled(next);
-    this.patch({ cameraEnabled: next });
+    try {
+      await room.localParticipant.setCameraEnabled(next);
+      this.patch({ cameraEnabled: next, error: null });
+    } catch (err) {
+      this.patch({ error: err instanceof Error ? err.message : "Couldn't switch the camera." });
+    }
     this.syncParticipants();
   }
 

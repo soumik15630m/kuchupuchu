@@ -37,13 +37,18 @@ export function VoicePlayer({ message }: { message: StoredMessage }) {
 
       // Decoding for the waveform is best-effort: a container the browser can
       // play but not decode offline must still be playable.
+      // Closed in `finally`: browsers cap concurrent AudioContexts at around
+      // six, so leaking one per undecodable voice note eventually stops audio
+      // decoding altogether.
+      let ctx: AudioContext | null = null;
       try {
-        const ctx = new AudioContext();
+        ctx = new AudioContext();
         const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
         setPeaks(peaksFrom(decoded.getChannelData(0)));
-        void ctx.close();
       } catch {
         // Keep the placeholder bars.
+      } finally {
+        void ctx?.close();
       }
       return objectUrl;
     } catch {

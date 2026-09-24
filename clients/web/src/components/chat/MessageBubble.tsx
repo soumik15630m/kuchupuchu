@@ -6,6 +6,7 @@ import { Icon } from "@/components/Icon";
 import { FileAttachment } from "@/components/chat/FileAttachment";
 import { FormattedText } from "@/components/chat/FormattedText";
 import { LinkPreviewCard } from "@/components/chat/LinkPreviewCard";
+import { useDirectory } from "@/lib/directory/DirectoryProvider";
 import { blockSaveGestures, useScreenGuard } from "@/lib/privacy/useScreenGuard";
 import { ContactCard, LocationCard } from "@/components/chat/LocationCard";
 import { VoicePlayer } from "@/components/chat/VoicePlayer";
@@ -270,6 +271,7 @@ export function MessageBubble({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { email: myEmail } = useSession();
+  const { nameFor } = useDirectory();
   const reactions = Object.entries(message.reactions ?? {});
 
   if (message.kind === "system") {
@@ -311,7 +313,7 @@ export function MessageBubble({
         {message.replyTo && (
           <span className={styles.quote}>
             <span className={styles.quoteWho}>
-              {message.replyTo.fromEmail === myEmail ? "You" : message.replyTo.fromEmail}
+              {message.replyTo.fromEmail === myEmail ? "You" : nameFor(message.replyTo.fromEmail)}
             </span>
             <span className={styles.quoteBody}>{message.replyTo.body || "Attachment"}</span>
           </span>

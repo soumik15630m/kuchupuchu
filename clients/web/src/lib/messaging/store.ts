@@ -229,6 +229,29 @@ export async function deleteMessage(id: string): Promise<void> {
 
 /** Text used for search and previews: formatting markers stripped, and
  * attachments described rather than left blank. */
+/** One line describing a message, for the chat list and notifications.
+ *
+ * Shared because it was written twice and both copies forgot `file`,
+ * `location` and `contact` -- so a chat whose last message was a document
+ * showed a blank preview, and its notification had an empty body. */
+export function describeMessage(message: StoredMessage): string {
+  if (message.deletedForEveryone) return "This message was deleted";
+  if (message.viewOnce) return "📷 Photo";
+  if (message.kind === "voice") return "🎤 Voice note";
+  if (message.kind === "sticker") return "🏷️ Sticker";
+  if (message.kind === "file") return `📄 ${message.media?.name ?? "Document"}`;
+  if (message.kind === "location") return "📍 Location";
+  if (message.kind === "contact") {
+    const who = message.contact?.displayName ?? message.contact?.username;
+    return who ? `👤 ${who}` : "👤 Contact";
+  }
+  if (message.kind === "media") {
+    const caption = message.body.trim();
+    return caption ? `📎 ${caption}` : "📎 Attachment";
+  }
+  return message.body;
+}
+
 export function searchableText(message: StoredMessage): string {
   if (message.deletedForEveryone) return "";
   // System notices are this device's own commentary, not conversation.
@@ -283,10 +306,20 @@ export async function setStarred(id: string, starred: boolean): Promise<StoredMe
 }
 
 /** Messages this device still owes the server, oldest first. */
-export async function pendingOutbox(): Promise<StoredMessage[]> {
+/** How long a message may sit in `sending` before a retry assumes the attempt
+ * that produced it is gone. Below this it could still be in flight, and the
+ * retry would race the original. */
+const SENDING_IS_STALE_MS = 60_000;
+
+export async function pendingOutbox(nowMs = Date.now()): Promise<StoredMessage[]> {
   const all = await allMessages();
   return all
-    .filter((m) => m.outgoing && (m.status === "failed" || m.status === "sending"))
+    .filter(
+      (m) =>
+        m.outgoing &&
+        (m.status === "failed" ||
+          (m.status === "sending" && nowMs - m.sentAtMs > SENDING_IS_STALE_MS))
+    )
     .sort((a, b) => a.sentAtMs - b.sentAtMs);
 }
 

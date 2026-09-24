@@ -1,5 +1,5 @@
 import { isMuted, settingsFor } from "./messaging/chat-settings";
-import type { StoredMessage } from "./messaging/store";
+import { describeMessage, type StoredMessage } from "./messaging/store";
 
 const ENABLED_KEY = "kuchupuchu:notifications";
 
@@ -29,14 +29,7 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 }
 
 export function preview(message: StoredMessage): string {
-  if (message.viewOnce) return "📷 Photo";
-  if (message.kind === "voice") return "🎤 Voice note";
-  if (message.kind === "sticker") return "🏷️ Sticker";
-  if (message.kind === "media") return "📎 Attachment";
-  if (message.kind === "file") return `📄 ${message.media?.name ?? "Document"}`;
-  if (message.kind === "location") return "📍 Location";
-  if (message.kind === "contact") return "👤 Contact";
-  return message.body;
+  return describeMessage(message);
 }
 
 /** Suppressed while the tab is visible — a notification for a message the

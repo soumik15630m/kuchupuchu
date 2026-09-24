@@ -22,6 +22,10 @@ const MARKERS = [
 const URL_PATTERN =
   /\b((?:https?:\/\/|www\.)[^\s<>()]+[^\s<>().,!?;:'"]|[a-z0-9-]+(?:\.[a-z0-9-]+)+\/[^\s<>()]*[^\s<>().,!?;:'"])/gi;
 
+/** Deep enough for any real message; shallow enough that the recursion
+ * cannot reach the engine's stack limit. */
+const MAX_FORMAT_DEPTH = 32;
+
 const MENTION_PATTERN = /(^|\s)@([a-z0-9._]{3,30})\b/gi;
 
 export function isSafeHref(raw) {
@@ -86,8 +90,13 @@ function linkifyAndMention(text, mentionables) {
  * @param {Map<string,string>} [mentionables] username (lowercase) -> email
  * @returns {Segment[]}
  */
-export function parseMessage(body, mentionables) {
+export function parseMessage(body, mentionables, depth = 0) {
   if (!body) return [];
+  // One frame per marker pair, so a body of forty thousand asterisks used to
+  // overflow the stack and take the whole render down with it. Past the cap
+  // the rest is shown literally, which is the right answer for input that is
+  // not really formatting anyway.
+  if (depth >= MAX_FORMAT_DEPTH) return linkifyAndMention(body, mentionables);
 
   for (const { char, type } of MARKERS) {
     const open = body.indexOf(char);
@@ -102,15 +111,18 @@ export function parseMessage(body, mentionables) {
     const before = body.slice(0, open);
     const after = body.slice(close + char.length);
     return [
-      ...parseMessage(before, mentionables),
+      ...parseMessage(before, mentionables, depth + 1),
       {
         type,
         value: inner,
         // Monospace is literal by definition: formatting inside it would make
         // it useless for showing the markers themselves.
-        children: type === "mono" ? [{ type: "text", value: inner }] : parseMessage(inner, mentionables),
+        children:
+          type === "mono"
+            ? [{ type: "text", value: inner }]
+            : parseMessage(inner, mentionables, depth + 1),
       },
-      ...parseMessage(after, mentionables),
+      ...parseMessage(after, mentionables, depth + 1),
     ];
   }
 

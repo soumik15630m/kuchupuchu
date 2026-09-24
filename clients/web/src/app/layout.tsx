@@ -19,10 +19,16 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  // A chat composer that zooms the page on focus is unusable on a phone.
-  maximumScale: 1,
+  // No maximumScale: locking zoom is a WCAG 1.4.4 failure. The iOS
+  // zoom-on-focus it used to guard against is prevented by the composer's
+  // inputs already computing to 16px, which is the actual fix.
   viewportFit: "cover",
-  themeColor: "#f0f2f5",
+  // Per scheme, so dark mode does not get light browser chrome. The single
+  // hardcoded light value disagreed with the manifest's accent too.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f0f2f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#111b21" },
+  ],
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

@@ -656,9 +656,13 @@ export class MessagingClient {
 
   async send(
     target: ChatTarget,
-    content: Omit<Content, "sentAtMs"> & { sentAtMs?: number }
+    content: Omit<Content, "sentAtMs"> & { sentAtMs?: number },
+    options: { clientMsgId?: string } = {}
   ): Promise<StoredMessage> {
-    const clientMsgId = crypto.randomUUID();
+    // A retry reuses the original id. Minting a fresh one made a message that
+    // was genuinely still in flight arrive twice, as two separate messages
+    // the recipient could not tell apart.
+    const clientMsgId = options.clientMsgId ?? crypto.randomUUID();
     const sentAtMs = content.sentAtMs ?? Date.now();
     const isControl =
       content.kind === "reaction" ||
@@ -953,7 +957,16 @@ export class MessagingClient {
     const blob = await this.fetchMedia(message.media);
     const { mediaId, key, iv } = await this.uploadMedia(audience, blob);
     await this.send(chat, {
-      kind: message.kind === "voice" ? "voice" : message.kind === "sticker" ? "sticker" : "media",
+      // `file` has to survive the round trip: mapping it to "media" rendered a
+      // forwarded document as a broken image on the other side.
+      kind:
+        message.kind === "voice"
+          ? "voice"
+          : message.kind === "sticker"
+            ? "sticker"
+            : message.kind === "file"
+              ? "file"
+              : "media",
       body: message.body,
       media: { ...message.media, mediaId, key, iv },
     });
@@ -980,13 +993,17 @@ export class MessagingClient {
         // Everything the bubble already shows has to be replayed, not just
         // the body: a retried message that silently lost its reply or its
         // link preview looks like a different message to the recipient.
-        await this.send(chat, {
-          kind: "text",
-          body: message.body,
-          replyTo: message.replyTo,
-          link: message.link,
-          sentAtMs: message.sentAtMs,
-        });
+        await this.send(
+          chat,
+          {
+            kind: "text",
+            body: message.body,
+            replyTo: message.replyTo,
+            link: message.link,
+            sentAtMs: message.sentAtMs,
+          },
+          { clientMsgId: message.id }
+        );
         await deleteMessage(message.id);
         sent += 1;
       } catch {

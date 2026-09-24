@@ -67,6 +67,11 @@
 }
 
 .itemName {
+  /* `display: block` matters: the chats list wraps these in flex rows, but
+     the member pickers put them straight inside .itemBody, which is not a
+     flex container -- so `flex: 1` was inert and the name ran into the
+     subtitle with no separator ("Stark@stark"). */
+  display: block;
   flex: 1;
   min-width: 0;
   font-size: calc(16px * var(--font-scale));
@@ -90,6 +95,7 @@
 }
 
 .itemPreview {
+  display: block;
   flex: 1;
   min-width: 0;
   font-size: calc(13.5px * var(--font-scale));

@@ -8,9 +8,15 @@ import { Icon } from "@/components/Icon";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
-import { isGroupId, loadGroups, type Group } from "@/lib/groups";
+import { getGroup, isGroupId, loadGroups, type Group } from "@/lib/groups";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
-import { searchMessages, searchableText, type SearchHit, type StoredMessage } from "@/lib/messaging/store";
+import {
+  describeMessage,
+  searchMessages,
+  searchableText,
+  type SearchHit,
+  type StoredMessage,
+} from "@/lib/messaging/store";
 import {
   isMuted,
   loadChatSettings,
@@ -23,12 +29,7 @@ import styles from "./chats.module.css";
 
 function preview(message: StoredMessage | null): string {
   if (!message) return "No messages yet";
-  const prefix = message.outgoing ? "You: " : "";
-  if (message.viewOnce) return `${prefix}📷 Photo`;
-  if (message.kind === "voice") return `${prefix}🎤 Voice note`;
-  if (message.kind === "sticker") return `${prefix}🏷️ Sticker`;
-  if (message.kind === "media") return `${prefix}📎 Attachment`;
-  return prefix + message.body;
+  return (message.outgoing ? "You: " : "") + describeMessage(message);
 }
 
 function timeLabel(ms: number): string {
@@ -84,6 +85,16 @@ export default function ChatsPage() {
     setMenuFor(null);
   }
 
+  // A chat id is either a member's address or a group id; this resolves both,
+  // so the list stops rendering the literal string "Group" for a group whose
+  // name it already has.
+  const titleFor = (chatId: string) =>
+    isGroupId(chatId) ? (getGroup(chatId)?.name ?? "Group") : nameFor(chatId);
+
+  // Shown only when there is something in it -- a permanent row on a fresh
+  // account is a dead end.
+  const hasArchived = Object.values(settings).some((s) => s?.archived);
+
   const rows = useMemo(() => {
     type Row = { email: string; name: string; group: boolean; summary: ReturnType<typeof chats.get> };
     const byEmail = new Map<string, Row>();
@@ -112,7 +123,7 @@ export default function ChatsPage() {
       if (!byEmail.has(chatId)) {
         byEmail.set(chatId, {
           email: chatId,
-          name: isGroupId(chatId) ? "Group" : nameFor(chatId),
+          name: titleFor(chatId),
           group: isGroupId(chatId),
           summary,
         });
@@ -158,7 +169,7 @@ export default function ChatsPage() {
 
         {ready && !online && <p className={styles.banner}>Reconnecting to the messaging service…</p>}
 
-        {hits === null && (
+        {hits === null && (showArchived || hasArchived) && (
           <button
             type="button"
             className={styles.archivedToggle}
@@ -183,12 +194,12 @@ export default function ChatsPage() {
                     onClick={() => router.push(`/chats/${encodeURIComponent(hit.chatId)}`)}
                   >
                     <span className={styles.avatar}>
-                      {initialsFor(isGroupId(hit.chatId) ? "Group" : nameFor(hit.chatId))}
+                      {initialsFor(titleFor(hit.chatId))}
                     </span>
                     <span className={styles.itemBody}>
                       <span className={styles.itemTop}>
                         <span className={styles.itemName}>
-                          {isGroupId(hit.chatId) ? "Group" : nameFor(hit.chatId)}
+                          {titleFor(hit.chatId)}
                         </span>
                         <span className={styles.itemTime}>{timeLabel(hit.message.sentAtMs)}</span>
                       </span>

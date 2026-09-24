@@ -141,3 +141,18 @@ test("a javascript: url is never previewed", () => {
 test("a link inside formatting is still found", () => {
   assert.equal(firstLink("*https://example.com/a*"), "https://example.com/a");
 });
+
+test("a body of nothing but markers does not overflow the stack", () => {
+  // One recursion per marker pair: without a depth bound this threw a
+  // RangeError and took the whole chat render with it.
+  const pathological = "a*b*".repeat(30000);
+  const segments = parseMessage(pathological);
+  assert.ok(segments.length > 0);
+});
+
+test("formatting past the depth bound is shown literally, not dropped", () => {
+  const deep = "*".repeat(200) + "hello" + "*".repeat(200);
+  assert.ok(plainText(deep).includes("hello"));
+  const flat = JSON.stringify(parseMessage(deep));
+  assert.ok(flat.includes("hello"), "the text survives");
+});

@@ -50,8 +50,11 @@ export async function compressImage(
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
+    // Captured before close(): the spec zeroes both once the bitmap is
+    // released, so reading them afterwards reports a 0x0 image.
+    const natural = { width: bitmap.width, height: bitmap.height };
     bitmap.close();
-    return { blob: file, width: bitmap.width, height: bitmap.height };
+    return { blob: file, ...natural };
   }
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
@@ -111,20 +114,43 @@ export async function makeThumbnail(file: Blob, maxEdge = 160): Promise<string |
   }
 }
 
+/** A poster frame is a nicety; the composer must not sit disabled waiting for
+ * one. Every wait below is bounded, because a container the browser accepts
+ * but cannot seek fires neither `onseeked` nor `onerror` and the promise
+ * simply never settles -- leaving the send button stuck on "busy" forever. */
+const POSTER_TIMEOUT_MS = 5000;
+
+function settleWithin<T>(ms: number, run: (resolve: (value: T) => void, reject: (err: Error) => void) => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out")), ms);
+    run(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 export async function videoPoster(file: File): Promise<{ thumb?: string; durationMs?: number }> {
   const url = URL.createObjectURL(file);
   try {
     const video = document.createElement("video");
     video.muted = true;
     video.src = url;
-    await new Promise<void>((resolve, reject) => {
+    await settleWithin<void>(POSTER_TIMEOUT_MS, (resolve, reject) => {
       video.onloadeddata = () => resolve();
       video.onerror = () => reject(new Error("video metadata failed to load"));
     });
     // Seeking off frame zero avoids the black frame many encoders start with.
     video.currentTime = Math.min(0.1, (video.duration || 1) / 2);
-    await new Promise<void>((resolve) => {
+    await settleWithin<void>(POSTER_TIMEOUT_MS, (resolve, reject) => {
       video.onseeked = () => resolve();
+      video.onerror = () => reject(new Error("video seek failed"));
     });
 
     const canvas = document.createElement("canvas");
