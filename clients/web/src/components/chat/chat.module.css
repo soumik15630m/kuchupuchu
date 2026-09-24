@@ -1466,3 +1466,52 @@
   font-weight: 600;
   pointer-events: none;
 }
+
+/* Where the reader left off, drawn across the stream. */
+.unreadMark {
+  align-self: stretch;
+  margin: 10px 0 4px;
+  padding: 3px 0;
+  border-top: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.loadEarlier {
+  align-self: center;
+  margin: 8px 0 12px;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+/* Flashed when a reply quote jumps you to the message it answers. */
+.bubble[data-flash="true"] {
+  animation: bubbleFlash 1.2s ease;
+}
+
+@keyframes bubbleFlash {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+  25% {
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+}
+
+/* The quote is a button now, so it needs the span's layout back. */
+.quote {
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}

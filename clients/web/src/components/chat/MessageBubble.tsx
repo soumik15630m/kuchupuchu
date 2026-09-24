@@ -289,6 +289,7 @@ export function MessageBubble({
   onForward,
   onStar,
   onRetry,
+  onJumpTo,
   onViewOnceOpened,
 }: {
   message: StoredMessage;
@@ -302,6 +303,8 @@ export function MessageBubble({
   onForward?: (message: StoredMessage) => void;
   onStar?: (message: StoredMessage) => void;
   onRetry?: (message: StoredMessage) => void;
+  /** Scrolls the quoted message into view. */
+  onJumpTo?: (id: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { email: myEmail } = useSession();
@@ -335,6 +338,7 @@ export function MessageBubble({
   return (
     <div className={styles.bubbleRow} data-outgoing={message.outgoing ? "true" : undefined}>
       <div
+        id={`msg-${message.id}`}
         className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in} ${
           message.kind === "sticker" ? styles.sticker : ""
         }`}
@@ -345,12 +349,19 @@ export function MessageBubble({
         }}
       >
         {message.replyTo && (
-          <span className={styles.quote}>
+          <button
+            type="button"
+            className={styles.quote}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (message.replyTo) onJumpTo?.(message.replyTo.id);
+            }}
+          >
             <span className={styles.quoteWho}>
               {message.replyTo.fromEmail === myEmail ? "You" : nameFor(message.replyTo.fromEmail)}
             </span>
             <span className={styles.quoteBody}>{message.replyTo.body || "Attachment"}</span>
-          </span>
+          </button>
         )}
 
         {message.viewOnce ? (

@@ -8,6 +8,10 @@ import { Composer } from "@/components/chat/Composer";
 import { ForwardSheet } from "@/components/chat/ForwardSheet";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import styles from "@/components/chat/chat.module.css";
+
+/** Messages rendered at once. Enough to fill any screen and scroll a little,
+ * small enough that opening a long chat is instant. */
+const PAGE_SIZE = 60;
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
@@ -115,6 +119,8 @@ export default function ChatPage() {
   // reading history.
   const atBottomRef = useRef(true);
   const [newBelow, setNewBelow] = useState(0);
+  const [windowSize, setWindowSize] = useState(PAGE_SIZE);
+  const [pendingJump, setPendingJump] = useState<string | null>(null);
   const lastCountRef = useRef(0);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -149,7 +155,59 @@ export default function ChatPage() {
     atBottomRef.current = true;
     lastCountRef.current = 0;
     setNewBelow(0);
+    setWindowSize(PAGE_SIZE);
   }, [email]);
+
+  // Only the tail is rendered. A long history was mounting every bubble it
+  // had ever seen, which is thousands of DOM nodes and every thumbnail
+  // decoded, for a screen that shows a dozen.
+  const windowed = useMemo(
+    () => (messages.length > windowSize ? messages.slice(-windowSize) : messages),
+    [messages, windowSize]
+  );
+
+  // Where the reader left off. Computed from the full list so it is right
+  // even when the message sits above the current window.
+  const firstUnreadId = useMemo(() => {
+    const first = messages.find((m) => !m.outgoing && m.status !== "read");
+    return first && first.id !== messages[0]?.id ? first.id : null;
+  }, [messages]);
+
+  /** Scrolls a quoted message into view and flashes it. Reply quotes were a
+   * dead <span> before, so there was no way back to what was replied to. */
+  const jumpTo = useCallback(
+    (id: string) => {
+      const index = messages.findIndex((m) => m.id === id);
+      if (index === -1) return;
+      // The target may be older than the rendered window, so widen first and
+      // scroll in the effect below -- after React has actually committed the
+      // larger window. Doing it in a rAF looked right and silently did
+      // nothing, because the anchor did not exist yet.
+      const fromEnd = messages.length - index;
+      if (fromEnd > windowSize) setWindowSize(fromEnd + 10);
+      // Jumping is a deliberate departure from the bottom. Without this the
+      // follow-new-messages effect fires when the window grows and snaps
+      // straight back, so the target flashed somewhere off screen.
+      atBottomRef.current = false;
+      setPendingJump(id);
+    },
+    [messages, windowSize]
+  );
+
+  useEffect(() => {
+    if (!pendingJump) return;
+    const el = document.getElementById(`msg-${pendingJump}`);
+    if (!el) return;
+    setPendingJump(null);
+    // Instant, not smooth: a smooth scroll fires onScroll on the way past the
+    // bottom, which flipped the follow-new-messages flag back on mid-flight
+    // and snapped the view straight back. A jump is a teleport anyway.
+    el.scrollIntoView({ block: "center" });
+    atBottomRef.current = false;
+    el.dataset.flash = "true";
+    const handle = setTimeout(() => delete el.dataset.flash, 1200);
+    return () => clearTimeout(handle);
+  }, [pendingJump, windowed]);
 
   const style = wallpaperStyle(wp, imageUrl);
   let lastDay = "";
@@ -217,14 +275,28 @@ export default function ChatPage() {
                   No messages yet. Everything here is end-to-end encrypted.
                 </p>
               )}
-              {messages.map((message) => {
+              {windowed.length < messages.length && (
+                <button
+                  type="button"
+                  className={styles.loadEarlier}
+                  onClick={() => setWindowSize((n) => n + PAGE_SIZE)}
+                >
+                  Load earlier messages
+                </button>
+              )}
+              {windowed.map((message) => {
                 const day = dayLabel(message.sentAtMs);
                 const separator = day !== lastDay ? day : null;
                 lastDay = day;
+                const showUnreadMark = message.id === firstUnreadId;
                 return (
                   <div key={message.id} style={{ display: "contents" }}>
                     {separator && <span className={styles.daySeparator}>{separator}</span>}
+                    {showUnreadMark && (
+                      <span className={styles.unreadMark}>Unread messages</span>
+                    )}
                     <MessageBubble
+                      onJumpTo={jumpTo}
                       message={message}
                       mentionables={mentionables}
                       onReply={setReplyTo}
