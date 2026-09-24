@@ -338,7 +338,7 @@ export function MessageBubble({
         )}
 
         <span className={styles.meta}>
-          {message.starred && <Icon name="check" size={11} />}
+          {message.starred && <Icon name="star" size={11} />}
           {message.editedAtMs && <span className={styles.edited}>edited</span>}
           {formatTime(message.sentAtMs)}
           {message.outgoing && <Ticks status={message.status} />}

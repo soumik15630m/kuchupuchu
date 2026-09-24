@@ -265,7 +265,7 @@ export default function CallPage() {
             aria-label={state?.dataSaver ? "Turn data saver off" : "Turn data saver on"}
             onClick={() => engineRef.current?.setDataSaver(!state?.dataSaver)}
           >
-            <Icon name="image" size={20} />
+            <Icon name="dataSaver" size={20} />
           </button>
 
           {state?.canSwitchCamera && state?.cameraEnabled && (
@@ -286,7 +286,7 @@ export default function CallPage() {
             aria-label={state?.screenSharing ? "Stop sharing your screen" : "Share your screen"}
             onClick={() => engineRef.current?.toggleScreenShare()}
           >
-            <Icon name="image" size={20} />
+            <Icon name="screenShare" size={20} />
           </button>
 
           {pipAvailable && (
@@ -297,7 +297,7 @@ export default function CallPage() {
               aria-label={pipActive ? "Close the floating window" : "Open in a floating window"}
               onClick={togglePip}
             >
-              <Icon name="image" size={20} />
+              <Icon name="pip" size={20} />
             </button>
           )}
 

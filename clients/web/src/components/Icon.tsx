@@ -23,6 +23,21 @@ const PATHS = {
   chevron: "m9 6 6 6-6 6",
   shield: "M12 2 4 5v6c0 5 3.4 9.2 8 11 4.6-1.8 8-6 8-11V5l-8-3Z",
   logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9",
+  // The call bar previously drew data saver, screen share and PiP all with
+  // `image` -- three adjacent buttons with byte-identical paths. Star and pin
+  // both used `check`, and "cancel reply" used `plus`.
+  screenShare: "M3 4h18v12H3V4Zm6 16h6m-3-4v4",
+  pip: "M3 5h18v14H3V5Zm10 6h6v5h-6v-5Z",
+  dataSaver: "M12 3v18m0-18a9 9 0 0 1 0 18M7 8.5h3m-3 7h3",
+  star: "m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2-5.5-2.9-5.5 2.9 1-6.2L3 9.6l6.2-.9L12 3Z",
+  pin: "M12 17v5m-5-9.5 1.5-6.2A2 2 0 0 1 10.4 5h3.2a2 2 0 0 1 2 1.3L17 12.5M6 12.5h12",
+  close: "M18 6 6 18M6 6l12 12",
+  forward: "m14 5 7 7-7 7M3 12h18",
+  pause: "M9 5v14M15 5v14",
+  play: "m7 4 12 8-12 8V4Z",
+  bell: "M18 8a6 6 0 1 0-12 0c0 7-3 8-3 8h18s-3-1-3-8M13.7 21a2 2 0 0 1-3.4 0",
+  cloud: "M18 17a4 4 0 0 0-1.3-7.8A6 6 0 0 0 5 10.5 3.5 3.5 0 0 0 6 17h12ZM12 12v8m0 0 3-3m-3 3-3-3",
+  key: "M15 7a4 4 0 1 1-3.5 5.9L9 15.4l-2 .2.2 2-2.2.2.2 2-3.2.2.3-3.3 7.2-7.2A4 4 0 0 1 15 7Zm1.5 2.5h.01",
   palette:
     "M12 21a9 9 0 1 1 0-18c4.9 0 9 3.6 9 8 0 2.5-2 4-4.5 4H14a2 2 0 0 0-1.4 3.4A1.8 1.8 0 0 1 12 21Z",
 } as const;

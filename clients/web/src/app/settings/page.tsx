@@ -92,13 +92,13 @@ export default function SettingsPage() {
             onClick={() => router.push("/settings/profile")}
           />
           <Row
-            icon="check"
+            icon="star"
             label="Starred messages"
             note="Messages you bookmarked"
             onClick={() => router.push("/settings/starred")}
           />
           <Row
-            icon="chats"
+            icon="bell"
             label="Notifications"
             note="Alerts for new messages"
             onClick={() => router.push("/settings/notifications")}
@@ -110,13 +110,13 @@ export default function SettingsPage() {
             onClick={() => router.push("/settings/privacy")}
           />
           <Row
-            icon="image"
+            icon="cloud"
             label="Chat backup"
             note="Encrypted backup of your messages and media"
             onClick={() => router.push("/settings/backup")}
           />
           <Row
-            icon="shield"
+            icon="key"
             label="Linked devices"
             note="Review and revoke your devices"
             onClick={() => router.push("/settings/devices")}

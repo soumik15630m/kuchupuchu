@@ -236,7 +236,7 @@ export default function ChatsPage() {
                         ? `Draft: ${settings[row.email].draft}`
                         : preview(row.summary?.lastMessage ?? null)}
                     </span>
-                    {settings[row.email]?.pinned && <Icon name="check" size={13} />}
+                    {settings[row.email]?.pinned && <Icon name="pin" size={13} />}
                     {isMuted(settings[row.email] ?? {}) && <Icon name="micOff" size={13} />}
                     {(row.summary?.unread ?? 0) > 0 && !isMuted(settings[row.email] ?? {}) && (
                       <span className={styles.unread}>{row.summary!.unread}</span>
