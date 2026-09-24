@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
+import { ChatListPane } from "@/components/chat/ChatListPane";
 import { Icon, type IconName } from "@/components/Icon";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { useDirectory } from "@/lib/directory/DirectoryProvider";
@@ -17,9 +18,14 @@ const TABS: { href: string; label: string; icon: IconName }[] = [
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
-/** `pane="detail"` collapses the list pane — a chat, call or settings sub-screen
- * owns the whole viewport. In that mode `children` is promoted into the detail
- * slot, so a single-pane screen does not have to know which slot it landed in. */
+/** `pane="detail"` collapses the list pane on a phone — a chat, call or
+ * settings sub-screen owns the whole viewport. In that mode `children` is
+ * promoted into the detail slot, so a single-pane screen does not have to
+ * know which slot it landed in.
+ *
+ * On a wide screen the CSS keeps both panes, so the sidebar needs something
+ * in it: for a chat route that is the chat list, which is what WhatsApp Web
+ * does and what this shell rendered as a blank column before. */
 export function AppShell({
   children,
   detail,
@@ -52,7 +58,9 @@ export function AppShell({
   return (
     <div className={styles.shell} data-pane={pane}>
       <div className={styles.body}>
-        <div className={styles.sidebar}>{isDetail ? null : children}</div>
+        <div className={styles.sidebar}>
+          {isDetail ? (pathname.startsWith("/chats") ? <ChatListPane /> : null) : children}
+        </div>
         <div className={styles.detail}>{isDetail ? (detail ?? children) : detail}</div>
       </div>
 
