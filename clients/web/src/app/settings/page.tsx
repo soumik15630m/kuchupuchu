@@ -116,6 +116,12 @@ export default function SettingsPage() {
             onClick={() => router.push("/settings/backup")}
           />
           <Row
+            icon="image"
+            label="Storage"
+            note="Cached media and space used"
+            onClick={() => router.push("/settings/storage")}
+          />
+          <Row
             icon="key"
             label="Linked devices"
             note="Review and revoke your devices"

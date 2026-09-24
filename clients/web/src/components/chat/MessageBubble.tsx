@@ -17,6 +17,20 @@ import type { StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
 
+/** Collapses per-member reactions into one entry per emoji, most popular
+ * first, keeping who reacted for the tooltip. */
+function groupReactions(entries: [string, string][]): { emoji: string; who: string[] }[] {
+  const byEmoji = new Map<string, string[]>();
+  for (const [who, emoji] of entries) {
+    const list = byEmoji.get(emoji);
+    if (list) list.push(who);
+    else byEmoji.set(emoji, [who]);
+  }
+  return [...byEmoji.entries()]
+    .map(([emoji, who]) => ({ emoji, who }))
+    .sort((a, b) => b.who.length - a.who.length);
+}
+
 function Ticks({
   status,
   onRetry,
@@ -372,9 +386,12 @@ export function MessageBubble({
 
         {reactions.length > 0 && (
           <span className={styles.reactions}>
-            {reactions.map(([who, emoji]) => (
-              <span key={who} title={who}>
+            {/* Grouped with counts rather than one span per reactor: five
+                people picking 👍 rendered as five identical thumbs. */}
+            {groupReactions(reactions).map(({ emoji, who }) => (
+              <span key={emoji} title={who.map((e) => nameFor(e)).join(", ")}>
                 {emoji}
+                {who.length > 1 && <em className={styles.reactionCount}>{who.length}</em>}
               </span>
             ))}
           </span>

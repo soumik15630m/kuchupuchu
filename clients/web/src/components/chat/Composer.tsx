@@ -22,6 +22,9 @@ import type { ReplyRef, StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
 
+/** Matches MAX_BLOB_BYTES in the messaging service (app/media.py). */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
 export function Composer({
   target,
   audience,
@@ -53,6 +56,14 @@ export function Composer({
   // Every picked or captured image passes through the editor first; sending
   // straight through would make crop and draw a separate, easily-missed path.
   const [editingPhoto, setEditingPhoto] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  /** Routes a file the same way the attach button does, so paste, drop and
+   * the picker cannot drift apart. */
+  function acceptFile(file: File) {
+    if (file.type.startsWith("image/")) setEditingPhoto(file);
+    else void sendAttachment(file);
+  }
   // The resolved preview for whatever link is currently in the draft, plus
   // the links the user dismissed so re-typing does not resurrect the card.
   const [preview, setPreview] = useState<LinkPreview | null>(null);
@@ -143,6 +154,17 @@ export function Composer({
 
   async function sendAttachment(file: File, captionOverride?: string, viewOnce?: boolean) {
     if (!client) return;
+    // Checked before the upload, not after: the server rejects at 25MB
+    // (app/media.py) and finding that out only once the bytes have crossed a
+    // constrained link is a slow way to learn nothing was sent. Images are
+    // exempt because compressImage shrinks them below this anyway.
+    if (!file.type.startsWith("image/") && file.size > MAX_ATTACHMENT_BYTES) {
+      setError(
+        `${file.name} is ${Math.round(file.size / (1024 * 1024))}MB — the limit is ` +
+          `${MAX_ATTACHMENT_BYTES / (1024 * 1024)}MB.`
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -410,6 +432,8 @@ export function Composer({
 
   return (
     <>
+      {dragging && <div className={styles.dropTarget}>Drop to send</div>}
+
       {editingPhoto && (
         <MediaEditor
           file={editingPhoto}
@@ -548,7 +572,34 @@ export function Composer({
         />
       )}
 
-      <div className={styles.composer}>
+      <div
+        className={styles.composer}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          // Only when the pointer actually leaves the composer, not when it
+          // crosses one of the buttons inside it.
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDragging(false);
+          for (const file of Array.from(e.dataTransfer.files)) acceptFile(file);
+        }}
+        onPaste={(e) => {
+          const files = Array.from(e.clipboardData.files);
+          if (files.length === 0) return;
+          // A screenshot on the clipboard is the common case, and pasting it
+          // used to do nothing at all.
+          e.preventDefault();
+          for (const file of files) acceptFile(file);
+        }}
+      >
         {recording ? (
           <div className={styles.recording}>
             <span className={styles.recordingDot} />
@@ -648,9 +699,7 @@ export function Composer({
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = "";
-          if (!file) return;
-          if (file.type.startsWith("image/")) setEditingPhoto(file);
-          else void sendAttachment(file);
+          if (file) acceptFile(file);
         }}
       />
     </>

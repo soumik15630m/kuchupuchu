@@ -4,7 +4,12 @@ import type { Session } from "../api/client";
 import { loadGroups, toRef, upsertFromRef, type Group } from "../groups";
 import type { MessagingClient } from "../messaging/client";
 import { loadChatSettings, updateChatSettings, type ChatSettings } from "../messaging/chat-settings";
-import { getCachedMedia, putCachedMediaBulk } from "../messaging/media-cache";
+import {
+  getCachedMedia,
+  pruneCache,
+  putCachedMediaBulk,
+  requestPersistentStorage,
+} from "../messaging/media-cache";
 import { allMessages, putMessagesMissing, type StoredMessage } from "../messaging/store";
 
 import { packArchive, unpackArchive } from "./archive.mjs";
@@ -199,6 +204,12 @@ export async function restoreBackup(
       blob: new Blob([blob.bytes], { type: blob.mime }),
     }))
   );
+
+  // After a restore the cache holds the only copy of anything older than the
+  // server's seven-day retention, so this is the moment to ask the browser
+  // not to evict it -- and to trim if the archive pushed it over the cap.
+  await requestPersistentStorage();
+  await pruneCache();
 
   for (const group of data.groups ?? []) {
     upsertFromRef(toRef(group), data.email, { trusted: true });

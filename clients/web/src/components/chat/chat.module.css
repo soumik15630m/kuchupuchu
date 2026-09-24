@@ -1443,3 +1443,26 @@
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
   cursor: pointer;
 }
+
+.reactionCount {
+  margin-left: 2px;
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+/* Shown while a file is dragged over the composer. */
+.dropTarget {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  pointer-events: none;
+}
