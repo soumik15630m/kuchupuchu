@@ -246,6 +246,11 @@ export function ChatListPane() {
                   {(row.summary?.unread ?? 0) > 0 && !isMuted(settings[row.email] ?? {}) && (
                     <span className={styles.unread}>{row.summary!.unread}</span>
                   )}
+                  {(row.summary?.unread ?? 0) === 0 && settings[row.email]?.unreadMark && (
+                    <span className={styles.unread} aria-label="Marked unread">
+                      •
+                    </span>
+                  )}
                 </span>
               </span>
             </button>
@@ -274,6 +279,13 @@ export function ChatListPane() {
                     onClick={() => patch(row.email, { pinned: !settings[row.email]?.pinned })}
                   >
                     {settings[row.email]?.pinned ? "Unpin" : "Pin"}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.itemMenuItem}
+                    onClick={() => patch(row.email, { unreadMark: !settings[row.email]?.unreadMark })}
+                  >
+                    {settings[row.email]?.unreadMark ? "Mark as read" : "Mark as unread"}
                   </button>
                   <button
                     type="button"

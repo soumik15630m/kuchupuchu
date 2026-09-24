@@ -6,6 +6,9 @@ export interface ChatSettings {
   /** Epoch ms the mute expires, or `Infinity` when muted indefinitely. */
   mutedUntilMs?: number;
   draft?: string;
+  /** Set by "mark as unread". Cleared when the chat is next opened, so it is
+   * a reminder rather than a state the member has to undo by hand. */
+  unreadMark?: boolean;
 }
 
 type AllSettings = Record<string, ChatSettings>;

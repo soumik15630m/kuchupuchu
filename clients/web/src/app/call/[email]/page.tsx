@@ -51,6 +51,12 @@ export default function CallPage() {
   const audioRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<CallState | null>(null);
   const [showSecurity, setShowSecurity] = useState(false);
+  const [showDevices, setShowDevices] = useState(false);
+  const [devices, setDevices] = useState<{
+    audioinput: MediaDeviceInfo[];
+    videoinput: MediaDeviceInfo[];
+    audiooutput: MediaDeviceInfo[];
+  } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [peerName, setPeerName] = useState(peerEmail);
   const logIdRef = useRef<string | null>(null);
@@ -325,6 +331,21 @@ export default function CallPage() {
             <Icon name="screenShare" size={20} />
           </button>
 
+          <button
+            className={styles.control}
+            type="button"
+            data-active={showDevices}
+            aria-label="Audio and video devices"
+            onClick={async () => {
+              // Labels are empty until permission has been granted, so this
+              // is read when the sheet opens rather than once at mount.
+              if (!showDevices) setDevices(await engineRef.current!.devices());
+              setShowDevices((v) => !v);
+            }}
+          >
+            <Icon name="settings" size={20} />
+          </button>
+
           {pipAvailable && (
             <button
               className={styles.control}
@@ -344,6 +365,42 @@ export default function CallPage() {
             onClick={leave}
           >
             <Icon name="hangup" size={24} />
+          </button>
+        </div>
+      )}
+
+      {showDevices && devices && (
+        <div className={styles.sheet} role="dialog" aria-label="Devices">
+          <h2 className={styles.sheetTitle}>Devices</h2>
+          {(
+            [
+              ["audioinput", "Microphone"],
+              ["videoinput", "Camera"],
+              ["audiooutput", "Speaker"],
+            ] as const
+          ).map(([kind, label]) => {
+            const list = devices[kind];
+            if (list.length === 0) return null;
+            const active = engineRef.current?.activeDevices()[kind];
+            return (
+              <div key={kind} className={styles.deviceGroup}>
+                <span className={styles.deviceLabel}>{label}</span>
+                {list.map((device, index) => (
+                  <button
+                    key={device.deviceId || index}
+                    type="button"
+                    className={styles.deviceOption}
+                    data-active={device.deviceId === active}
+                    onClick={() => void engineRef.current?.selectDevice(kind, device.deviceId)}
+                  >
+                    {device.label || `${label} ${index + 1}`}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+          <button className={styles.sheetClose} type="button" onClick={() => setShowDevices(false)}>
+            Done
           </button>
         </div>
       )}

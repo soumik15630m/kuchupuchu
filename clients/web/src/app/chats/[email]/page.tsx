@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
@@ -15,6 +15,7 @@ const PAGE_SIZE = 60;
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
+import { settingsFor, updateChatSettings } from "@/lib/messaging/chat-settings";
 import { loadSharing, shouldShowTyping } from "@/lib/messaging/privacy.mjs";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
@@ -39,6 +40,7 @@ function dayLabel(ms: number): string {
 export default function ChatPage() {
   const params = useParams<{ email: string }>();
   const router = useRouter();
+  const search = useSearchParams();
   const email = decodeURIComponent(params.email);
   const { wallpaperFor } = useTheme();
   const { nameFor, members } = useDirectory();
@@ -95,6 +97,12 @@ export default function ChatPage() {
     document.addEventListener("visibilitychange", markVisible);
     return () => document.removeEventListener("visibilitychange", markVisible);
   }, [client, email, messages]);
+
+  // Opening the chat is what clears a manual "mark as unread".
+  useEffect(() => {
+    if (settingsFor(email).unreadMark) updateChatSettings(email, { unreadMark: false });
+  }, [email]);
+
 
   useEffect(() => {
     if (wp.kind !== "image") {
@@ -208,6 +216,12 @@ export default function ChatPage() {
     const handle = setTimeout(() => delete el.dataset.flash, 1200);
     return () => clearTimeout(handle);
   }, [pendingJump, windowed]);
+
+// A search hit links straight to its message rather than just the chat.
+  const jumpTarget = search.get("m");
+  useEffect(() => {
+    if (jumpTarget && messages.length > 0) jumpTo(jumpTarget);
+  }, [jumpTarget, messages.length, jumpTo]);
 
   const style = wallpaperStyle(wp, imageUrl);
   let lastDay = "";

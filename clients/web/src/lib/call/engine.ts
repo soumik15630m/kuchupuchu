@@ -654,6 +654,52 @@ export class CallEngine {
     await room.switchActiveDevice("videoinput", next.deviceId);
   }
 
+  /** Inputs and outputs the member can pick between.
+   *
+   * Labels are blank until a track has been granted, which is why this is
+   * read on demand rather than cached at construction. */
+  async devices(): Promise<{
+    audioinput: MediaDeviceInfo[];
+    videoinput: MediaDeviceInfo[];
+    audiooutput: MediaDeviceInfo[];
+  }> {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      return {
+        audioinput: all.filter((d) => d.kind === "audioinput"),
+        videoinput: all.filter((d) => d.kind === "videoinput"),
+        audiooutput: all.filter((d) => d.kind === "audiooutput"),
+      };
+    } catch {
+      return { audioinput: [], videoinput: [], audiooutput: [] };
+    }
+  }
+
+  /** The device currently in use for each kind, so the picker can show it. */
+  activeDevices(): { audioinput?: string; videoinput?: string; audiooutput?: string } {
+    const room = this.room;
+    if (!room) return {};
+    return {
+      audioinput: room.getActiveDevice("audioinput"),
+      videoinput: room.getActiveDevice("videoinput"),
+      audiooutput: room.getActiveDevice("audiooutput"),
+    };
+  }
+
+  async selectDevice(kind: MediaDeviceKind, deviceId: string): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    try {
+      await room.switchActiveDevice(kind, deviceId);
+      this.patch({ error: null });
+    } catch (err) {
+      // Firefox has no setSinkId, so picking an output can legitimately fail.
+      this.patch({
+        error: err instanceof Error ? err.message : "Couldn't switch that device.",
+      });
+    }
+  }
+
   async hangUp(): Promise<void> {
     this.stopQualityReporting();
     try {
