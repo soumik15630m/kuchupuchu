@@ -7,6 +7,7 @@ import { FileAttachment } from "@/components/chat/FileAttachment";
 import { FormattedText } from "@/components/chat/FormattedText";
 import { LinkPreviewCard } from "@/components/chat/LinkPreviewCard";
 import { useDirectory } from "@/lib/directory/DirectoryProvider";
+import { loadSharing, shouldShowReadReceipt } from "@/lib/messaging/privacy.mjs";
 import { blockSaveGestures, useScreenGuard } from "@/lib/privacy/useScreenGuard";
 import { ContactCard, LocationCard } from "@/components/chat/LocationCard";
 import { VoicePlayer } from "@/components/chat/VoicePlayer";
@@ -16,16 +17,33 @@ import type { StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
 
-function Ticks({ status }: { status: StoredMessage["status"] }) {
+function Ticks({
+  status,
+  onRetry,
+  showRead,
+}: {
+  status: StoredMessage["status"];
+  onRetry?: () => void;
+  showRead: boolean;
+}) {
   if (status === "sending") return <span className={styles.tick}>·</span>;
   if (status === "failed")
     return (
-      <span className={styles.tick} data-failed="true" title="Not sent">
+      <button
+        type="button"
+        className={styles.tick}
+        data-failed="true"
+        title="Not sent — tap to try again"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRetry?.();
+        }}
+      >
         !
-      </span>
+      </button>
     );
   return (
-    <span className={styles.tick} data-read={status === "read" ? "true" : undefined}>
+    <span className={styles.tick} data-read={showRead && status === "read" ? "true" : undefined}>
       {status === "sent" ? "✓" : "✓✓"}
     </span>
   );
@@ -256,6 +274,7 @@ export function MessageBubble({
   onEdit,
   onForward,
   onStar,
+  onRetry,
   onViewOnceOpened,
 }: {
   message: StoredMessage;
@@ -268,6 +287,7 @@ export function MessageBubble({
   onEdit?: (message: StoredMessage) => void;
   onForward?: (message: StoredMessage) => void;
   onStar?: (message: StoredMessage) => void;
+  onRetry?: (message: StoredMessage) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { email: myEmail } = useSession();
@@ -341,7 +361,13 @@ export function MessageBubble({
           {message.starred && <Icon name="star" size={11} />}
           {message.editedAtMs && <span className={styles.edited}>edited</span>}
           {formatTime(message.sentAtMs)}
-          {message.outgoing && <Ticks status={message.status} />}
+          {message.outgoing && (
+            <Ticks
+              status={message.status}
+              showRead={shouldShowReadReceipt(loadSharing())}
+              onRetry={onRetry ? () => onRetry(message) : undefined}
+            />
+          )}
         </span>
 
         {reactions.length > 0 && (

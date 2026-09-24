@@ -17,6 +17,7 @@ import {
   type ReplyRef,
   type StoredMessage,
 } from "./store";
+import { loadSharing, shouldSendReadReceipt, shouldSendTyping } from "./privacy.mjs";
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 import { deleteAvatar, putAvatar } from "../directory/avatar-store";
 
@@ -468,7 +469,10 @@ export class MessagingClient {
       this.events.onCallSignal({
         kind: content.kind,
         fromEmail,
-        chatId: content.call.chatId,
+        // The caller computed this from their own side, so for a direct call
+        // it is *our* address. Logged as-is it produced a missed call in a
+        // chat with yourself; a group id is the same on both sides.
+        chatId: isGroupId(content.call.chatId) ? content.call.chatId : fromEmail,
         video: content.call.video,
         sentAtMs: content.sentAtMs,
       });
@@ -962,10 +966,13 @@ export class MessagingClient {
 
   async markRead(chatId: string, clientMsgIds: string[]): Promise<void> {
     if (clientMsgIds.length === 0) return;
+    // Local state first, and unconditionally: the unread badge is this
+    // device's own business whatever the member shares with anyone else.
     for (const id of clientMsgIds) {
       const updated = await advanceStatus(id, "read");
       if (updated) this.events.onStatus(updated);
     }
+    if (!shouldSendReadReceipt(loadSharing())) return;
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(JSON.stringify({ type: "read", client_msg_ids: clientMsgIds }));
       return;
@@ -979,6 +986,7 @@ export class MessagingClient {
 
   async sendTyping(target: ChatTarget, stopped = false): Promise<void> {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
+    if (!shouldSendTyping(loadSharing())) return;
     const now = Date.now();
 
     // Only a "typing" frame is throttled -- resending it on every keystroke is

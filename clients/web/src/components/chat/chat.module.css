@@ -1422,3 +1422,24 @@
   font-size: 12px;
   opacity: 0.75;
 }
+
+/* "N new messages" pill. Shown only when the reader has scrolled up: the
+   stream follows new messages while they are at the bottom, and this is how
+   they hear about ones that arrived while they were reading history. */
+.newBelow {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 4;
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
 import { Composer } from "@/components/chat/Composer";
@@ -11,6 +11,7 @@ import styles from "@/components/chat/chat.module.css";
 import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
+import { loadSharing, shouldShowTyping } from "@/lib/messaging/privacy.mjs";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
@@ -60,7 +61,11 @@ export default function ChatPage() {
   }, [members, chat.group, email]);
 
   const wp = wallpaperFor(email);
-  const typing = typistsIn(typingState, email, Date.now());
+  // Reciprocal, like read receipts: someone who hides their own typing does
+  // not get to watch everyone else's.
+  const typing = shouldShowTyping(loadSharing())
+    ? typistsIn(typingState, email, Date.now())
+    : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -72,11 +77,19 @@ export default function ChatPage() {
     };
   }, [email, revision]);
 
-  // Opening a chat is what marks its incoming messages read.
+  // Opening a chat marks its incoming messages read -- but only while the tab
+  // is actually in front. A chat left open in a background tab was reporting
+  // read receipts for messages nobody had looked at.
   useEffect(() => {
     if (!client) return;
-    const unread = messages.filter((m) => !m.outgoing && m.status !== "read").map((m) => m.id);
-    if (unread.length > 0) void client.markRead(email, unread);
+    const markVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      const unread = messages.filter((m) => !m.outgoing && m.status !== "read").map((m) => m.id);
+      if (unread.length > 0) void client.markRead(email, unread);
+    };
+    markVisible();
+    document.addEventListener("visibilitychange", markVisible);
+    return () => document.removeEventListener("visibilitychange", markVisible);
   }, [client, email, messages]);
 
   useEffect(() => {
@@ -97,10 +110,46 @@ export default function ChatPage() {
     };
   }, [wp.kind, wp.value]);
 
-  useLayoutEffect(() => {
+  // Follow new messages only while already at the bottom. Scrolling on every
+  // change yanked the view away mid-sentence whenever anything arrived while
+  // reading history.
+  const atBottomRef = useRef(true);
+  const [newBelow, setNewBelow] = useState(0);
+  const lastCountRef = useRef(0);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = canvasRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, typing]);
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+    atBottomRef.current = true;
+    setNewBelow(0);
+  }, []);
+
+  useLayoutEffect(() => {
+    const grew = messages.length - lastCountRef.current;
+    lastCountRef.current = messages.length;
+
+    if (atBottomRef.current) {
+      const el = canvasRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+      setNewBelow(0);
+      return;
+    }
+    // Only incoming messages are worth a pill; sending one always jumps.
+    if (grew > 0) {
+      const added = messages.slice(-grew);
+      const incoming = added.filter((m) => !m.outgoing).length;
+      if (incoming > 0) setNewBelow((n) => n + incoming);
+      if (added.some((m) => m.outgoing)) scrollToBottom();
+    }
+  }, [messages, typing, scrollToBottom]);
+
+  // Jumping to the bottom when the chat changes is always right.
+  useLayoutEffect(() => {
+    atBottomRef.current = true;
+    lastCountRef.current = 0;
+    setNewBelow(0);
+  }, [email]);
 
   const style = wallpaperStyle(wp, imageUrl);
   let lastDay = "";
@@ -147,6 +196,13 @@ export default function ChatPage() {
         <div className={styles.chat}>
           <div
             ref={canvasRef}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              // A few pixels of slack: fractional scroll heights mean an
+              // exact comparison is never true on a zoomed or scaled display.
+              atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+              if (atBottomRef.current) setNewBelow(0);
+            }}
             className={styles.canvas}
             style={{
               backgroundColor: style.backgroundColor,
@@ -182,6 +238,7 @@ export default function ChatPage() {
                       onViewOnceOpened={(msg) =>
                         chat.target && void client?.markViewOnceOpened(chat.target, msg)
                       }
+                      onRetry={() => void client?.retryOutbox()}
                       onEdit={setEditing}
                       onForward={setForwarding}
                       onStar={async (msg) => {
@@ -204,6 +261,16 @@ export default function ChatPage() {
               )}
             </div>
           </div>
+
+          {newBelow > 0 && (
+            <button
+              type="button"
+              className={styles.newBelow}
+              onClick={() => scrollToBottom("smooth")}
+            >
+              {newBelow} new message{newBelow === 1 ? "" : "s"} ↓
+            </button>
+          )}
 
           {replyTo && (
             <div className={styles.replyBar}>

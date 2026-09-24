@@ -148,8 +148,10 @@ export default function CallPage() {
         connectedAtRef.current ? "completed" : "failed",
         connectedAtRef.current
       );
-      // Stops the ringing wherever it is still going: hang-up, navigating
-      // away and closing the tab all land here.
+      // Best effort. An in-app hang-up or route change gets this out, but a
+      // hard unload -- closing the tab, a full page navigation -- kills the
+      // request with it. The callee's ring timeout is the actual guarantee
+      // that a phone stops ringing; this just makes it immediate when it can.
       if (target && clientRef.current && !isAnswering && !connectedAtRef.current) {
         void clientRef.current.signalCall(target, "call-cancel", withVideo).catch(() => {});
       }

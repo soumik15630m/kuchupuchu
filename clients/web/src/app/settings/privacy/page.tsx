@@ -14,6 +14,7 @@ import {
   setAutoLock,
 } from "@/lib/lock/app-lock";
 import { linkPreviewsEnabled, setLinkPreviewsEnabled } from "@/lib/messaging/link-preview";
+import { defaultSharing, loadSharing, saveSharing } from "@/lib/messaging/privacy.mjs";
 
 import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
@@ -29,12 +30,14 @@ export default function PrivacyPage() {
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [previews, setPreviews] = useState(true);
+  const [sharing, setSharing] = useState(defaultSharing);
 
   useEffect(() => {
     setEnabled(isLockEnabled());
     const config = loadLock();
     if (config) setAutoLockMsState(config.autoLockMs);
     setPreviews(linkPreviewsEnabled());
+    setSharing(loadSharing());
   }, []);
 
   async function turnOn() {
@@ -158,6 +161,54 @@ export default function PrivacyPage() {
               this device — anyone with real access to this computer&apos;s profile can still read
               the stored data. Use your operating system&apos;s disk encryption for that.
             </p>
+          </div>
+
+          <div className={settingsStyles.divider} />
+
+          <div className={themeStyles.section}>
+            <h2 className={themeStyles.sectionTitle}>What others see</h2>
+            {(
+              [
+                {
+                  key: "readReceipts" as const,
+                  label: "Read receipts",
+                  hint: "Turning these off also hides other people's from you. Receipts in groups are always sent.",
+                },
+                {
+                  key: "typing" as const,
+                  label: "Typing indicator",
+                  hint: "Turning this off also hides when other people are typing.",
+                },
+              ]
+            ).map((row) => (
+              <div key={row.key} style={{ marginBottom: 14 }}>
+                <h2 className={themeStyles.sectionTitle} style={{ marginTop: 10 }}>
+                  {row.label}
+                </h2>
+                <div className={themeStyles.options} role="radiogroup" aria-label={row.label}>
+                  {[
+                    { label: "On", value: true },
+                    { label: "Off", value: false },
+                  ].map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      role="radio"
+                      aria-checked={sharing[row.key] === option.value}
+                      className={themeStyles.radio}
+                      onClick={() => {
+                        setSharing(saveSharing({ [row.key]: option.value }));
+                        setSaved("Saved.");
+                      }}
+                    >
+                      <span className={themeStyles.radioMark} />
+                      <span className={themeStyles.radioLabel}>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className={themeStyles.hint}>{row.hint}</p>
+              </div>
+            ))}
           </div>
 
           <div className={settingsStyles.divider} />
