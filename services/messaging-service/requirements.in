@@ -1,3 +1,17 @@
+# Compile this INSIDE the target image, not on the host:
+#
+#   docker run --rm -v "$(pwd)":/w -w /w python:3.12-slim sh -c \
+#     "pip install -q pip-tools && pip-compile --generate-hashes \
+#      --no-emit-index-url --output-file=requirements.txt requirements.in"
+#
+# uvicorn[standard] pulls uvloop on every platform except Windows, where it
+# carries `sys_platform != "win32"` and is skipped. A lock compiled on Windows
+# therefore omits uvloop and includes colorama -- and because the file is
+# hash-pinned, pip inside the Linux image refuses to resolve uvloop at install
+# time and `docker compose up --build` fails outright. The header pip-compile
+# writes records its own resolved defaults and is not runnable as printed;
+# this block is.
+
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic[email]==2.9.2

@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Emits a self-contained server with only the files it actually needs, so
+  // the runtime image carries no node_modules tree and no build toolchain.
+  output: "standalone",
   // `next dev` only accepts its own origin by default, and the client never
   // hydrates on any other. Testing two members at once needs two origins,
   // since one origin means one localStorage and therefore one device identity.

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 
 import { SessionProvider } from "@/lib/auth/SessionProvider";
 import { AutoBackup } from "@/components/shell/AutoBackup";
@@ -24,11 +25,16 @@ export const viewport: Viewport = {
   themeColor: "#f0f2f5",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Stamped by proxy.ts. The theme bootstrap below is an inline script, so
+  // without the matching nonce the CSP blocks it and the app flashes the
+  // wrong theme -- or, under the old policy, did not render at all.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: NO_FLASH_SCRIPT }} />
       </head>
       <body>
         <ThemeProvider>

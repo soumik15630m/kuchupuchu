@@ -121,6 +121,19 @@ services:
       - auth-service
     restart: unless-stopped
 
+  # §13 Phase 5's web client. Served at / by nginx; it never listens on a
+  # host port of its own, so the only way in is through the TLS terminator.
+  web:
+    build: ./clients/web
+    environment:
+      - NODE_ENV=production
+    expose:
+      - "3000"
+    depends_on:
+      - auth-service
+      - messaging-service
+    restart: unless-stopped
+
 volumes:
   redis-data:
   sqlite-data:
