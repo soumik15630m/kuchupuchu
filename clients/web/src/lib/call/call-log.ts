@@ -36,6 +36,22 @@ function write(records: CallRecord[]): void {
   }
 }
 
+/** A call that rang out, was cancelled, or arrived too late to answer.
+ * Until incoming calls existed at all, `missed` was a value nothing could
+ * produce. */
+export function recordMissedCall(chatId: string, video: boolean): void {
+  const record: CallRecord = {
+    id: crypto.randomUUID(),
+    chatId,
+    outgoing: false,
+    video,
+    startedAtMs: Date.now(),
+    durationMs: null,
+    outcome: "missed",
+  };
+  write([record, ...loadCallLog()]);
+}
+
 export function recordCallStarted(chatId: string, outgoing: boolean, video: boolean): string {
   const record: CallRecord = {
     id: crypto.randomUUID(),

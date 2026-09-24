@@ -16,6 +16,16 @@ export interface ResolvedChat {
   audience: string[];
 }
 
+/** The send target for a chat id, outside React.
+ *
+ * The hook below is the usual way in; this exists for the places that need a
+ * target in an event handler rather than a render, such as declining a call. */
+export function targetFor(chatId: string): ChatTarget | null {
+  if (!isGroupId(chatId)) return { kind: "direct", email: chatId };
+  const group = getGroup(chatId);
+  return group ? { kind: "group", group } : null;
+}
+
 /** Resolves a chat id — an email for a 1:1, or a `group-` id — into the target
  * the messaging client sends to. Returns `target: null` for a group this device
  * does not know yet, which is how a deleted or never-received group reads. */

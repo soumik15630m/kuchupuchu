@@ -6,7 +6,8 @@ import { deviceId } from "../api/client";
 import { useSession } from "../auth/SessionProvider";
 import { useDirectory } from "../directory/DirectoryProvider";
 import { notifyMessage, setBadge } from "../notifications";
-import { MessagingClient } from "./client";
+import { MessagingClient, type CallSignal } from "./client";
+import { recordMissedCall } from "../call/call-log";
 import { summaries, type ChatSummary, type StoredMessage } from "./store";
 import { statusReels, type StatusReel } from "./status-store";
 import { isMuted, settingsFor } from "./chat-settings";
@@ -31,7 +32,15 @@ interface MessagingContextValue {
   profileRevision: number;
   refreshChats: () => void;
   refreshStatuses: () => void;
+  /** The call currently ringing, if any. Null once answered, declined,
+   * cancelled or timed out. */
+  incomingCall: CallSignal | null;
+  dismissIncomingCall: () => void;
 }
+
+/** How long a phone rings before it is a missed call. Also the age past which
+ * a queued invite is history rather than an invitation. */
+const RING_TIMEOUT_MS = 45_000;
 
 const MessagingContext = createContext<MessagingContextValue | null>(null);
 
@@ -78,6 +87,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [profileRevision, setProfileRevision] = useState(0);
   const [typing, setTyping] = useState<TypingState>(emptyTyping);
   const [statuses, setStatuses] = useState<StatusReel[]>([]);
+  const [incomingCall, setIncomingCall] = useState<CallSignal | null>(null);
+  const ringTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Entries carry their own expiry, so a single sweep replaces the per-sender
   // timers this used to juggle.
   const typingSweep = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -108,6 +119,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     }, 120);
   }, []);
 
+  const dismissIncomingCall = useCallback(() => {
+    if (ringTimer.current) clearTimeout(ringTimer.current);
+    ringTimer.current = null;
+    setIncomingCall(null);
+  }, []);
+
   const refreshStatuses = useCallback(() => {
     statusReels()
       .then(setStatuses)
@@ -136,6 +153,37 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       onTyping: (event) => setTyping((prev) => applyTyping(prev, event, Date.now())),
       onProfileChanged: () => setProfileRevision((n) => n + 1),
       onThemeReceived: (incoming) => announceSyncedTheme(coerceTheme(incoming)),
+      onCallSignal: (signal) => {
+        if (ringTimer.current) clearTimeout(ringTimer.current);
+        ringTimer.current = null;
+
+        if (signal.kind !== "call-invite") {
+          // Cancelled or declined: stop ringing, and record the ones the
+          // member never got to. "missed" was a value nothing produced.
+          setIncomingCall((current) => {
+            if (current && signal.kind === "call-cancel") {
+              recordMissedCall(current.chatId, current.video);
+            }
+            return null;
+          });
+          return;
+        }
+
+        // An invite that sat in the offline queue is history, not a ringing
+        // phone; answering it would join a room everyone has left.
+        if (Date.now() - signal.sentAtMs > RING_TIMEOUT_MS) {
+          recordMissedCall(signal.chatId, signal.video);
+          return;
+        }
+
+        setIncomingCall(signal);
+        ringTimer.current = setTimeout(() => {
+          setIncomingCall((current) => {
+            if (current) recordMissedCall(current.chatId, current.video);
+            return null;
+          });
+        }, RING_TIMEOUT_MS);
+      },
     });
     clientRef.current = client;
 
@@ -165,6 +213,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       refreshTimer.current = null;
       if (typingSweep.current) clearInterval(typingSweep.current);
       typingSweep.current = null;
+      if (ringTimer.current) clearTimeout(ringTimer.current);
+      ringTimer.current = null;
+      setIncomingCall(null);
       setTyping(emptyTyping());
     };
   }, [status, session, refreshChats, refreshStatuses]);
@@ -181,8 +232,22 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       profileRevision,
       refreshChats,
       refreshStatuses,
+      incomingCall,
+      dismissIncomingCall,
     }),
-    [online, ready, chats, typing, statuses, revision, profileRevision, refreshChats, refreshStatuses]
+    [
+      online,
+      ready,
+      chats,
+      typing,
+      statuses,
+      revision,
+      profileRevision,
+      refreshChats,
+      refreshStatuses,
+      incomingCall,
+      dismissIncomingCall,
+    ]
   );
 
   return <MessagingContext.Provider value={value}>{children}</MessagingContext.Provider>;

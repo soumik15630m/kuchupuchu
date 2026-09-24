@@ -335,3 +335,69 @@
   cursor: pointer;
   z-index: 5;
 }
+
+/* --- incoming call banner --- */
+.incoming {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(94vw, 420px);
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--surface-raised, #1f2c33);
+  color: #fff;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+}
+
+.incomingAvatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  font-weight: 600;
+}
+
+.incomingWho {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.incomingWho strong {
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.incomingWho span {
+  font-size: 12.5px;
+  opacity: 0.75;
+}
+
+.incomingButton {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  cursor: pointer;
+}
+
+.incomingDecline {
+  background: var(--danger, #e2554f);
+}
+
+.incomingAccept {
+  background: var(--ok, #25d366);
+}

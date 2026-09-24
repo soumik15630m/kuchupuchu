@@ -14,6 +14,8 @@ import { CallEngine, type CallState } from "@/lib/call/engine";
 import { useDirectory } from "@/lib/directory/DirectoryProvider";
 import { getGroup, isGroupId } from "@/lib/groups";
 import { finishCall, recordCallStarted } from "@/lib/call/call-log";
+import { useMessaging } from "@/lib/messaging/MessagingProvider";
+import { targetFor } from "@/lib/messaging/useChatTarget";
 import { pickPipParticipant, pipSupported } from "@/lib/call/pip.mjs";
 
 function qualityName(q: ConnectionQuality): string {
@@ -40,6 +42,10 @@ export default function CallPage() {
 
   const peerEmail = decodeURIComponent(params.email);
   const withVideo = search.get("video") === "1";
+  // Set when arriving by answering the ringing banner, rather than by
+  // starting a call. It decides both how the call is logged and whether this
+  // side rings the other.
+  const isAnswering = search.get("incoming") === "1";
 
   const engineRef = useRef<CallEngine | null>(null);
   const audioRef = useRef<HTMLDivElement>(null);
@@ -48,6 +54,10 @@ export default function CallPage() {
   const [now, setNow] = useState(() => Date.now());
   const [peerName, setPeerName] = useState(peerEmail);
   const logIdRef = useRef<string | null>(null);
+  // In a ref so the teardown above can still reach it after unmount.
+  const { client } = useMessaging();
+  const clientRef = useRef(client);
+  clientRef.current = client;
   const connectedAtRef = useRef<number | null>(null);
 
   const [callees, setCallees] = useState<string[] | null>(null);
@@ -118,9 +128,18 @@ export default function CallPage() {
     if (callees === null) return;
     const engine = new CallEngine(session, deviceId(), setState);
     engineRef.current = engine;
-    const logId = recordCallStarted(peerEmail, true, withVideo);
+    const logId = recordCallStarted(peerEmail, !isAnswering, withVideo);
     logIdRef.current = logId;
     engine.start(callees, withVideo);
+
+    // Ring the other side. Answering is what makes them join this room, so
+    // without it the caller sat at "Ringing…" while the callee never learned
+    // a call was happening at all.
+    const target = targetFor(peerEmail);
+    if (target && clientRef.current && !isAnswering) {
+      void clientRef.current.signalCall(target, "call-invite", withVideo).catch(() => {});
+    }
+
     return () => {
       // Closing the record here rather than on hang-up covers navigating away
       // and closing the tab too.
@@ -129,10 +148,15 @@ export default function CallPage() {
         connectedAtRef.current ? "completed" : "failed",
         connectedAtRef.current
       );
+      // Stops the ringing wherever it is still going: hang-up, navigating
+      // away and closing the tab all land here.
+      if (target && clientRef.current && !isAnswering && !connectedAtRef.current) {
+        void clientRef.current.signalCall(target, "call-cancel", withVideo).catch(() => {});
+      }
       engine.dispose();
       engineRef.current = null;
     };
-  }, [status, session, peerEmail, withVideo, callees]);
+  }, [status, session, peerEmail, withVideo, callees, isAnswering]);
 
   // The first time it actually connects is what the log's duration measures.
   useEffect(() => {
@@ -219,7 +243,7 @@ export default function CallPage() {
           <div>
             <Avatar email={peerEmail} label={peerName} size={96} className={styles.centreAvatar} />
             <div className={styles.centreName}>{peerName}</div>
-            <p className={styles.centreNote}>Ringing…</p>
+            <p className={styles.centreNote}>{isAnswering ? "Connecting…" : "Ringing…"}</p>
           </div>
         </div>
       ) : (

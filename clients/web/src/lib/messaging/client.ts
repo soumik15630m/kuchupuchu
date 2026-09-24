@@ -20,6 +20,14 @@ import {
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 import { deleteAvatar, putAvatar } from "../directory/avatar-store";
 
+export interface CallSignal {
+  kind: "call-invite" | "call-cancel" | "call-decline";
+  fromEmail: string;
+  chatId: string;
+  video: boolean;
+  sentAtMs: number;
+}
+
 /** A newly linked device asks its siblings for the archive exactly once;
  * the device id is stored with the flag so a re-minted id asks again. */
 const HISTORY_ASKED_KEY = "kuchupuchu:history-asked";
@@ -55,7 +63,10 @@ interface Content {
     | "history-request"
     | "history"
     | "view-once-opened"
-    | "theme";
+    | "theme"
+    | "call-invite"
+    | "call-cancel"
+    | "call-decline";
   body: string;
   media?: MediaRef;
   replyTo?: ReplyRef;
@@ -76,6 +87,10 @@ interface Content {
   /** Set on `theme`: display settings, mirrored to this account's own other
    * devices. Never sent to anyone else. */
   theme?: Record<string, unknown>;
+  /** Set on the `call-*` kinds. The room is derived from the chat on both
+   * sides, so this only has to say which conversation is ringing and whether
+   * the caller turned a camera on. */
+  call?: { chatId: string; video: boolean };
   /** Set on `text`: a preview the sender resolved, so the recipient never
    * fetches the link themselves. */
   link?: LinkPreview;
@@ -133,6 +148,7 @@ export interface MessagingEvents {
   /** A peer broadcast a new avatar. */
   onProfileChanged: (email: string) => void;
   onThemeReceived: (theme: Record<string, unknown>) => void;
+  onCallSignal: (signal: CallSignal) => void;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -331,7 +347,10 @@ export class MessagingClient {
       content.kind === "history-request" ||
       content.kind === "history" ||
       content.kind === "view-once-opened" ||
-      content.kind === "theme"
+      content.kind === "theme" ||
+      content.kind === "call-invite" ||
+      content.kind === "call-cancel" ||
+      content.kind === "call-decline"
     ) {
       this.rememberControl(wire.client_msg_id);
       await this.applyControl(content, wire.from_email, wire.from_device);
@@ -434,6 +453,25 @@ export class MessagingClient {
       const updated = { ...message, viewedOnceAtMs: content.sentAtMs, media: undefined };
       await putMessage(updated);
       this.events.onStatus(updated);
+      return;
+    }
+
+    if (
+      content.kind === "call-invite" ||
+      content.kind === "call-cancel" ||
+      content.kind === "call-decline"
+    ) {
+      if (!content.call) return;
+      // Ignore this account's own devices ringing themselves: the fan-out
+      // copies every message to them, including the invite we just sent.
+      if (fromEmail.toLowerCase() === this.api.email.toLowerCase()) return;
+      this.events.onCallSignal({
+        kind: content.kind,
+        fromEmail,
+        chatId: content.call.chatId,
+        video: content.call.video,
+        sentAtMs: content.sentAtMs,
+      });
       return;
     }
 
@@ -812,6 +850,22 @@ export class MessagingClient {
     } catch {
       // A view receipt is not worth surfacing or retrying.
     }
+  }
+
+  /** Rings the other side.
+   *
+   * Lock-screen ringing needs the wake service, but an in-app banner does
+   * not: the delivery WebSocket is already connected, so the invite rides the
+   * same encrypted path as everything else and the server sees only
+   * ciphertext. Before this there was no incoming-call path at all -- the
+   * caller's screen said "Ringing…" while the callee learned nothing. */
+  async signalCall(
+    target: ChatTarget,
+    kind: "call-invite" | "call-cancel" | "call-decline",
+    video: boolean
+  ): Promise<void> {
+    const chatId = targetChatId(target);
+    await this.send(target, { kind, body: "", call: { chatId, video } });
   }
 
   /** Mirrors display settings to this account's other devices.
