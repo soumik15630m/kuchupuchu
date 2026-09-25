@@ -21,7 +21,13 @@ import { presenceLabel } from "@/lib/messaging/presence.mjs";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
-import { deleteMessage, messagesFor, setStarred, type StoredMessage } from "@/lib/messaging/store";
+import {
+  deleteMessage,
+  messagesFor,
+  searchableText,
+  setStarred,
+  type StoredMessage,
+} from "@/lib/messaging/store";
 import { wallpaperStyle } from "@/lib/theme/apply";
 import { useTheme } from "@/lib/theme/ThemeProvider";
 import { getWallpaper } from "@/lib/theme/wallpaper-store";
@@ -131,6 +137,8 @@ export default function ChatPage() {
   const [newBelow, setNewBelow] = useState(0);
   const [windowSize, setWindowSize] = useState(PAGE_SIZE);
   const [pendingJump, setPendingJump] = useState<string | null>(null);
+  /** Null when not selecting; a set of message ids otherwise. */
+  const [selection, setSelection] = useState<Set<string> | null>(null);
   const lastCountRef = useRef(0);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -166,6 +174,7 @@ export default function ChatPage() {
     lastCountRef.current = 0;
     setNewBelow(0);
     setWindowSize(PAGE_SIZE);
+    setSelection(null);
   }, [email]);
 
   // Only the tail is rendered. A long history was mounting every bubble it
@@ -327,6 +336,19 @@ export default function ChatPage() {
                     )}
                     <MessageBubble
                       onJumpTo={jumpTo}
+                      selectable={selection !== null}
+                      selected={selection?.has(message.id) ?? false}
+                      onToggleSelect={(msg) =>
+                        setSelection((prev) => {
+                          if (!prev) return prev;
+                          const next = new Set(prev);
+                          if (next.has(msg.id)) next.delete(msg.id);
+                          else next.add(msg.id);
+                          // Clearing the last one leaves selection mode, so
+                          // there is no empty toolbar to dismiss by hand.
+                          return next.size === 0 ? null : next;
+                        })
+                      }
                       message={message}
                       mentionables={mentionables}
                       onReply={setReplyTo}
@@ -343,6 +365,7 @@ export default function ChatPage() {
                       onRetry={() => void client?.retryOutbox()}
                       onEdit={setEditing}
                       onForward={setForwarding}
+                      onSelect={(msg) => setSelection(new Set([msg.id]))}
                       onStar={async (msg) => {
                         const updated = await setStarred(msg.id, !msg.starred);
                         if (updated) setMessages((prev) => prev.map((m) => (m.id === msg.id ? updated : m)));
@@ -363,6 +386,56 @@ export default function ChatPage() {
               )}
             </div>
           </div>
+
+          {selection && (
+            <div className={styles.selectionBar} role="toolbar" aria-label="Selected messages">
+              <button type="button" onClick={() => setSelection(null)} aria-label="Cancel">
+                <Icon name="close" size={18} />
+              </button>
+              <span className={styles.selectionCount}>
+                {selection.size} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const chosen = messages.filter((m) => selection.has(m.id));
+                  const text = chosen
+                    .map((m) => `[${new Date(m.sentAtMs).toLocaleString()}] ` +
+                      `${m.outgoing ? "You" : nameFor(m.fromEmail)}: ${searchableText(m)}`)
+                    .join("\n");
+                  void navigator.clipboard?.writeText(text);
+                  setSelection(null);
+                }}
+              >
+                Copy
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // Forwarding reuses the single-message sheet, one at a time,
+                  // rather than a second bulk path that could drift from it.
+                  const chosen = messages.filter((m) => selection.has(m.id));
+                  setSelection(null);
+                  if (chosen.length > 0) setForwarding(chosen[0]);
+                }}
+              >
+                Forward
+              </button>
+              <button
+                type="button"
+                className={styles.selectionDanger}
+                onClick={async () => {
+                  const ids = [...selection];
+                  setSelection(null);
+                  for (const id of ids) await deleteMessage(id);
+                  setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+                  refreshChats();
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          )}
 
           {newBelow > 0 && (
             <button

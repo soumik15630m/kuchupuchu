@@ -1234,10 +1234,14 @@ export class MessagingClient {
   /** `audience` must list every member allowed to download the blob; the
    * server enforces it, so a group upload that named only one member would 404
    * for everyone else. */
-  async uploadMedia(audience: string[], blob: Blob): Promise<{ mediaId: string; key: string; iv: string }> {
+  async uploadMedia(
+    audience: string[],
+    blob: Blob,
+    onProgress?: (fraction: number) => void
+  ): Promise<{ mediaId: string; key: string; iv: string }> {
     const { encryptBlob } = await import("./media");
     const { data, key, iv } = await encryptBlob(blob);
-    const { id } = await this.api.uploadMedia(data, [...audience, this.api.email]);
+    const { id } = await this.api.uploadMedia(data, [...audience, this.api.email], onProgress);
     return { mediaId: id, key, iv };
   }
 

@@ -336,11 +336,64 @@ export class Session {
     });
   }
 
-  async uploadMedia(blob: Blob, audience: string[]): Promise<{ id: string }> {
+  /** Uploads an encrypted blob, reporting progress as it goes.
+   *
+   * XMLHttpRequest rather than fetch: `fetch` has no upload progress event at
+   * all, and the streaming request bodies that would replace it need HTTP/2
+   * and are still not available everywhere. On a constrained link a photo can
+   * take tens of seconds, and a composer that just sits there looks broken.
+   */
+  async uploadMedia(
+    blob: Blob,
+    audience: string[],
+    onProgress?: (fraction: number) => void
+  ): Promise<{ id: string }> {
     const form = new FormData();
     form.append("file", blob, "blob.bin");
     form.append("audience", audience.join(","));
-    return this.msgAuthed("/media", { method: "POST", body: form });
+    if (!onProgress) return this.msgAuthed("/media", { method: "POST", body: form });
+
+    const send = (token: string) =>
+      new Promise<{ id: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${MSG_BASE}/media`);
+        xhr.setRequestHeader("authorization", `Bearer ${token}`);
+        xhr.upload.onprogress = (e) => {
+          // `lengthComputable` is false for a chunked body; reporting 0 then
+          // jumping to 1 is better than a bar that moves backwards.
+          if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total);
+        };
+        xhr.onload = () => {
+          if (xhr.status < 200 || xhr.status >= 300) {
+            let detail = xhr.statusText || `HTTP ${xhr.status}`;
+            try {
+              detail = JSON.parse(xhr.responseText).detail ?? detail;
+            } catch {
+              // Non-JSON error body; the status line will do.
+            }
+            reject(new ApiError(xhr.status, detail));
+            return;
+          }
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new ApiError(xhr.status, "the server sent an unreadable reply"));
+          }
+        };
+        xhr.onerror = () => reject(new ApiError(0, "the upload could not be sent"));
+        xhr.onabort = () => reject(new ApiError(0, "the upload was cancelled"));
+        xhr.send(form);
+      });
+
+    if (!isUsable(this.accessToken)) await this.refresh();
+    try {
+      return await send(this.accessToken!);
+    } catch (err) {
+      // Same 401-retry as msgAuthed: a token that lapsed mid-upload should
+      // cost a retry, not the whole attachment.
+      if (!(err instanceof ApiError) || err.status !== 401) throw err;
+      return send(await this.refresh());
+    }
   }
 
   downloadMedia(mediaId: string): Promise<ArrayBuffer> {

@@ -8,6 +8,7 @@ import { FormattedText } from "@/components/chat/FormattedText";
 import { LinkPreviewCard } from "@/components/chat/LinkPreviewCard";
 import { useDirectory } from "@/lib/directory/DirectoryProvider";
 import { loadSharing, shouldShowReadReceipt } from "@/lib/messaging/privacy.mjs";
+import { beginSwipe, moveSwipe, shouldReply } from "@/lib/messaging/swipe.mjs";
 import { blockSaveGestures, useScreenGuard } from "@/lib/privacy/useScreenGuard";
 import { ContactCard, LocationCard } from "@/components/chat/LocationCard";
 import { VoicePlayer } from "@/components/chat/VoicePlayer";
@@ -290,6 +291,10 @@ export function MessageBubble({
   onStar,
   onRetry,
   onJumpTo,
+  selectable,
+  selected,
+  onToggleSelect,
+  onSelect,
   onViewOnceOpened,
 }: {
   message: StoredMessage;
@@ -305,10 +310,17 @@ export function MessageBubble({
   onRetry?: (message: StoredMessage) => void;
   /** Scrolls the quoted message into view. */
   onJumpTo?: (id: string) => void;
+  /** Multi-select. When `selectable`, a tap toggles instead of opening. */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (message: StoredMessage) => void;
+  /** Starts multi-select from the message menu. */
+  onSelect?: (message: StoredMessage) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { email: myEmail } = useSession();
   const { nameFor } = useDirectory();
+  const [swipe, setSwipe] = useState(() => beginSwipe(0, 0));
   const reactions = Object.entries(message.reactions ?? {});
 
   if (message.kind === "system") {
@@ -339,6 +351,25 @@ export function MessageBubble({
     <div className={styles.bubbleRow} data-outgoing={message.outgoing ? "true" : undefined}>
       <div
         id={`msg-${message.id}`}
+        style={swipe.offset ? { transform: `translateX(${swipe.offset}px)` } : undefined}
+        data-selected={selected ? "true" : undefined}
+        onPointerDown={(e) => {
+          if (e.pointerType === "mouse" || selectable) return;
+          setSwipe(beginSwipe(e.clientX, e.clientY));
+        }}
+        onPointerMove={(e) => {
+          if (!swipe.startX && !swipe.claimed) return;
+          const next = moveSwipe(swipe, e.clientX, e.clientY);
+          if (next !== swipe) setSwipe(next);
+        }}
+        onPointerUp={() => {
+          if (shouldReply(swipe)) onReply?.(message);
+          setSwipe(beginSwipe(0, 0));
+        }}
+        onPointerCancel={() => setSwipe(beginSwipe(0, 0))}
+        onClick={() => {
+          if (selectable) onToggleSelect?.(message);
+        }}
         className={`${styles.bubble} ${message.outgoing ? styles.out : styles.in} ${
           message.kind === "sticker" ? styles.sticker : ""
         }`}
@@ -462,6 +493,16 @@ export function MessageBubble({
               }}
             >
               Forward
+            </button>
+            <button
+              type="button"
+              className={styles.menuItem}
+              onClick={() => {
+                onSelect?.(message);
+                setMenuOpen(false);
+              }}
+            >
+              Select
             </button>
             <button
               type="button"

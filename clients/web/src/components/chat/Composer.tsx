@@ -57,6 +57,8 @@ export function Composer({
   // straight through would make crop and draw a separate, easily-missed path.
   const [editingPhoto, setEditingPhoto] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** Fraction of the current attachment uploaded, or null when idle. */
+  const [uploading, setUploading] = useState<number | null>(null);
 
   /** Routes a file the same way the attach button does, so paste, drop and
    * the picker cannot drift apart. */
@@ -196,7 +198,7 @@ export function Composer({
       onReplyConsumed?.();
       setDraft("");
       updateChatSettings(chatId, { draft: "" });
-      const { mediaId, key, iv } = await client.uploadMedia(audience, blob);
+      const { mediaId, key, iv } = await client.uploadMedia(audience, blob, setUploading);
       await client.send(target, {
         kind: isDocument ? "file" : "media",
         body: caption,
@@ -219,6 +221,7 @@ export function Composer({
       setError(err instanceof Error ? err.message : "Couldn't send that file.");
     } finally {
       setBusy(false);
+      setUploading(null);
     }
   }
 
@@ -433,6 +436,17 @@ export function Composer({
   return (
     <>
       {dragging && <div className={styles.dropTarget}>Drop to send</div>}
+
+      {uploading !== null && (
+        <div
+          className={styles.uploadBar}
+          role="progressbar"
+          aria-label="Uploading"
+          aria-valuenow={Math.round(uploading * 100)}
+        >
+          <span style={{ width: `${Math.round(uploading * 100)}%` }} />
+        </div>
+      )}
 
       {editingPhoto && (
         <MediaEditor

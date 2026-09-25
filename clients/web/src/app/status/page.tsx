@@ -8,6 +8,13 @@ import { Pane, PaneEmpty, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
+import {
+  defaultStatusAudience,
+  describeStatusAudience,
+  loadStatusAudience,
+  saveStatusAudience,
+  statusRecipients,
+} from "@/lib/messaging/status-audience.mjs";
 import { compressImage, makeThumbnail, videoPoster } from "@/lib/messaging/media";
 import type { StatusReel } from "@/lib/messaging/status-store";
 
@@ -33,11 +40,20 @@ export default function StatusPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [statusAudience, setStatusAudience] = useState(defaultStatusAudience);
+  const [pickingAudience, setPickingAudience] = useState(false);
 
-  /** Everyone this device knows about. Status has no per-post audience picker;
-   * it goes to the same fixed group the app is for (§1). */
+  useEffect(() => {
+    setStatusAudience(loadStatusAudience());
+  }, []);
+
+  /** Who this post is encrypted for.
+   *
+   * Exclusion is real rather than a flag: someone left out never receives the
+   * ciphertext, so there is no server-side visibility rule that could be got
+   * wrong or changed later. */
   function audience(): string[] {
-    return others.map((m) => m.email);
+    return statusRecipients(statusAudience, others.map((m) => m.email));
   }
 
   const mine = statuses.filter((r) => r.outgoing);
@@ -136,6 +152,66 @@ export default function StatusPage() {
         <PaneHeader title="Status" />
         <PaneScroll>
           {error && <p style={{ color: "var(--danger)", padding: "10px 14px" }}>{error}</p>}
+
+          <button
+            type="button"
+            className={styles.audienceRow}
+            onClick={() => setPickingAudience((v) => !v)}
+          >
+            <span>Who can see your status</span>
+            <strong>{describeStatusAudience(statusAudience, others.map((m) => m.email))}</strong>
+          </button>
+
+          {pickingAudience && (
+            <div className={styles.audiencePicker}>
+              <div className={styles.audienceModes}>
+                {(
+                  [
+                    ["all", "Everyone except…"],
+                    ["only", "Only share with…"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    data-active={statusAudience.mode === mode}
+                    onClick={() => setStatusAudience(saveStatusAudience({ mode }))}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {others.map((member) => {
+                const list =
+                  statusAudience.mode === "only" ? statusAudience.only : statusAudience.except;
+                const checked = list.includes(member.email.toLowerCase());
+                return (
+                  <label key={member.email} className={styles.audienceMember}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        const email = member.email.toLowerCase();
+                        const next = checked
+                          ? list.filter((e) => e !== email)
+                          : [...list, email];
+                        setStatusAudience(
+                          saveStatusAudience(
+                            statusAudience.mode === "only" ? { only: next } : { except: next }
+                          )
+                        );
+                      }}
+                    />
+                    <span>{nameFor(member.email)}</span>
+                  </label>
+                );
+              })}
+              <p className={styles.audienceHint}>
+                Anyone left out never receives the post at all — it is not encrypted for them, so
+                there is nothing on the server for them to be shown by mistake.
+              </p>
+            </div>
+          )}
 
           {composing ? (
             <div className={styles.composeSheet}>
