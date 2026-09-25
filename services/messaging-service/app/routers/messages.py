@@ -147,7 +147,7 @@ async def websocket(socket: WebSocket, token: str = ""):
         return
 
     await socket.accept()
-    await hub.add(device_id, socket)
+    await hub.add(device_id, socket, email)
 
     try:
         rows = await asyncio.to_thread(pending_for_device, device_id)
@@ -159,6 +159,25 @@ async def websocket(socket: WebSocket, token: str = ""):
 
             if kind == "ping":
                 await socket.send_json({"type": "pong"})
+
+            elif kind == "presence":
+                # The client declares whether it shares presence. Enforced
+                # here rather than client-side: this service is the relay, so
+                # a rule it does not apply is not a rule.
+                shares = bool(payload.get("share"))
+                was_visible = hub.shares(email)
+                hub.set_sharing(email, shares)
+                await socket.send_json(
+                    {"type": "presence_snapshot", "members": hub.snapshot_for(email)}
+                )
+                if shares and not was_visible:
+                    await hub.broadcast_presence(email, True, None)
+                elif was_visible and not shares:
+                    # Going private reads as going offline to everyone else,
+                    # with no last-seen to remember them by.
+                    hub.set_sharing(email, True)
+                    await hub.broadcast_presence(email, False, None)
+                    hub.set_sharing(email, False)
 
             elif kind == "typing":
                 to_device = payload.get("to_device")
@@ -199,3 +218,8 @@ async def websocket(socket: WebSocket, token: str = ""):
         logger.exception("websocket handler failed for device %s", device_id)
     finally:
         await hub.remove(device_id, socket)
+        # Only once the member's *last* device goes: a phone disconnecting
+        # while the laptop is still connected is not "went offline".
+        if not hub.is_email_online(email):
+            stamp = hub.mark_seen(email)
+            await hub.broadcast_presence(email, False, stamp)

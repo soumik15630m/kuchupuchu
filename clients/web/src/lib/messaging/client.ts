@@ -21,6 +21,12 @@ import { loadSharing, shouldSendReadReceipt, shouldSendTyping } from "./privacy.
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 import { deleteAvatar, putAvatar } from "../directory/avatar-store";
 
+export interface PresenceEntry {
+  email: string;
+  online: boolean;
+  lastSeenAt: string | null;
+}
+
 export interface CallSignal {
   kind: "call-invite" | "call-cancel" | "call-decline";
   fromEmail: string;
@@ -150,6 +156,8 @@ export interface MessagingEvents {
   onProfileChanged: (email: string) => void;
   onThemeReceived: (theme: Record<string, unknown>) => void;
   onCallSignal: (signal: CallSignal) => void;
+  /** `replace` distinguishes the connect-time snapshot from a single update. */
+  onPresence: (entries: PresenceEntry[], replace: boolean) => void;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -226,6 +234,9 @@ export class MessagingClient {
     socket.onopen = () => {
       this.reconnectAttempt = 0;
       this.events.onConnectionChange(true);
+      // Declared on every connect, not once: the setting can change while
+      // offline, and the server treats "never said" as not sharing.
+      this.publishPresenceSharing();
       // Anything typed while offline is owed to the server; without this it
       // sits behind a red exclamation mark until the user notices it.
       void this.retryOutbox().then((sent) => {
@@ -283,6 +294,31 @@ export class MessagingClient {
           typeof frame.by === "string" ? frame.by : null
         );
         if (updated) this.events.onStatus(updated);
+        break;
+      }
+      case "presence_snapshot": {
+        const members = Array.isArray(frame.members) ? frame.members : [];
+        this.events.onPresence(
+          members.map((m: Record<string, unknown>) => ({
+            email: String(m.email ?? ""),
+            online: Boolean(m.online),
+            lastSeenAt: typeof m.lastSeenAt === "string" ? m.lastSeenAt : null,
+          })),
+          true
+        );
+        break;
+      }
+      case "presence": {
+        this.events.onPresence(
+          [
+            {
+              email: String(frame.email ?? ""),
+              online: Boolean(frame.online),
+              lastSeenAt: typeof frame.lastSeenAt === "string" ? frame.lastSeenAt : null,
+            },
+          ],
+          false
+        );
         break;
       }
       case "typing": {
@@ -982,6 +1018,17 @@ export class MessagingClient {
     } catch {
       // Receipts are not worth a retry queue; the next read sweep resends.
     }
+  }
+
+  /** Tells the server whether to include this member in presence.
+   *
+   * The server enforces reciprocity, so this also decides whether anyone
+   * else's presence comes back. Safe to call whenever the setting changes. */
+  publishPresenceSharing(): void {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    this.socket.send(
+      JSON.stringify({ type: "presence", share: loadSharing().lastSeen === true })
+    );
   }
 
   async sendTyping(target: ChatTarget, stopped = false): Promise<void> {

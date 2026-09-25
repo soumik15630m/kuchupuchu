@@ -6,7 +6,7 @@ import { deviceId } from "../api/client";
 import { useSession } from "../auth/SessionProvider";
 import { useDirectory } from "../directory/DirectoryProvider";
 import { notifyMessage, setBadge } from "../notifications";
-import { MessagingClient, type CallSignal } from "./client";
+import { MessagingClient, type CallSignal, type PresenceEntry } from "./client";
 import { recordMissedCall } from "../call/call-log";
 import { summaries, type ChatSummary, type StoredMessage } from "./store";
 import { statusReels, type StatusReel } from "./status-store";
@@ -36,6 +36,9 @@ interface MessagingContextValue {
    * cancelled or timed out. */
   incomingCall: CallSignal | null;
   dismissIncomingCall: () => void;
+  /** Who is online, and when anyone else was last seen. Empty when this
+   * member has presence turned off -- the server withholds it. */
+  presence: Map<string, PresenceEntry>;
 }
 
 /** How long a phone rings before it is a missed call. Also the age past which
@@ -88,6 +91,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [typing, setTyping] = useState<TypingState>(emptyTyping);
   const [statuses, setStatuses] = useState<StatusReel[]>([]);
   const [incomingCall, setIncomingCall] = useState<CallSignal | null>(null);
+  const [presence, setPresence] = useState<Map<string, PresenceEntry>>(new Map());
   const ringTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Entries carry their own expiry, so a single sweep replaces the per-sender
   // timers this used to juggle.
@@ -153,6 +157,14 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       onTyping: (event) => setTyping((prev) => applyTyping(prev, event, Date.now())),
       onProfileChanged: () => setProfileRevision((n) => n + 1),
       onThemeReceived: (incoming) => announceSyncedTheme(coerceTheme(incoming)),
+      onPresence: (entries, replace) =>
+        setPresence((prev) => {
+          const next = replace ? new Map<string, PresenceEntry>() : new Map(prev);
+          for (const entry of entries) {
+            if (entry.email) next.set(entry.email.toLowerCase(), entry);
+          }
+          return next;
+        }),
       onCallSignal: (signal) => {
         if (ringTimer.current) clearTimeout(ringTimer.current);
         ringTimer.current = null;
@@ -216,6 +228,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       if (ringTimer.current) clearTimeout(ringTimer.current);
       ringTimer.current = null;
       setIncomingCall(null);
+      setPresence(new Map());
       setTyping(emptyTyping());
     };
   }, [status, session, refreshChats, refreshStatuses]);
@@ -234,6 +247,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       refreshStatuses,
       incomingCall,
       dismissIncomingCall,
+      presence,
     }),
     [
       online,
@@ -247,6 +261,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       refreshStatuses,
       incomingCall,
       dismissIncomingCall,
+      presence,
     ]
   );
 

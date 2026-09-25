@@ -15,6 +15,7 @@ import {
 } from "@/lib/lock/app-lock";
 import { linkPreviewsEnabled, setLinkPreviewsEnabled } from "@/lib/messaging/link-preview";
 import { defaultSharing, loadSharing, saveSharing } from "@/lib/messaging/privacy.mjs";
+import { useMessaging } from "@/lib/messaging/MessagingProvider";
 
 import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
@@ -22,6 +23,7 @@ import themeStyles from "../theme/theme.module.css";
 const MIN_PIN = 4;
 
 export default function PrivacyPage() {
+  const { client } = useMessaging();
   const [enabled, setEnabled] = useState(false);
   const [autoLockMs, setAutoLockMsState] = useState<number>(60_000);
   const [pin, setPin] = useState("");
@@ -179,6 +181,11 @@ export default function PrivacyPage() {
                   label: "Typing indicator",
                   hint: "Turning this off also hides when other people are typing.",
                 },
+                {
+                  key: "lastSeen" as const,
+                  label: "Online and last seen",
+                  hint: "Turning this off also hides everyone else's. The server keeps last-seen times in memory only — they are never written to disk, and a restart forgets them.",
+                },
               ]
             ).map((row) => (
               <div key={row.key} style={{ marginBottom: 14 }}>
@@ -198,6 +205,9 @@ export default function PrivacyPage() {
                       className={themeStyles.radio}
                       onClick={() => {
                         setSharing(saveSharing({ [row.key]: option.value }));
+                        // Presence is relayed by the server, so the change has
+                        // to reach it now rather than on the next connect.
+                        if (row.key === "lastSeen") client?.publishPresenceSharing();
                         setSaved("Saved.");
                       }}
                     >

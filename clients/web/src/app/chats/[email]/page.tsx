@@ -17,6 +17,7 @@ import { Pane, PaneHeader, paneStyles } from "@/components/ui/Pane";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { settingsFor, updateChatSettings } from "@/lib/messaging/chat-settings";
 import { loadSharing, shouldShowTyping } from "@/lib/messaging/privacy.mjs";
+import { presenceLabel } from "@/lib/messaging/presence.mjs";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
@@ -44,7 +45,8 @@ export default function ChatPage() {
   const email = decodeURIComponent(params.email);
   const { wallpaperFor } = useTheme();
   const { nameFor, members } = useDirectory();
-  const { client, revision, typing: typingState, online, ready, refreshChats } = useMessaging();
+  const { client, revision, typing: typingState, online, ready, refreshChats, presence } =
+    useMessaging();
 
   const chat = useChatTarget(email, revision);
   const name = chat.title;
@@ -223,6 +225,17 @@ export default function ChatPage() {
     if (jumpTarget && messages.length > 0) jumpTo(jumpTarget);
   }, [jumpTarget, messages.length, jumpTo]);
 
+  // Presence only makes sense for a 1:1; a group is "N members".
+  const presenceSubtitle = useMemo(() => {
+    if (chat.group) return null;
+    return presenceLabel(
+      presence.get(email.toLowerCase()) ?? null,
+      Date.now(),
+      (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      (ms) => new Date(ms).toLocaleDateString([], { day: "numeric", month: "short" })
+    );
+  }, [presence, email, chat.group]);
+
   const style = wallpaperStyle(wp, imageUrl);
   let lastDay = "";
 
@@ -231,7 +244,10 @@ export default function ChatPage() {
       <Pane>
         <PaneHeader
           title={name}
-          subtitle={typingLabel(typing.map(nameFor), Boolean(chat.group)) ?? chat.subtitle}
+          subtitle={
+            typingLabel(typing.map(nameFor), Boolean(chat.group)) ??
+            (chat.group ? chat.subtitle : (presenceSubtitle ?? chat.subtitle))
+          }
           backHref="/chats"
           actions={
             <>
