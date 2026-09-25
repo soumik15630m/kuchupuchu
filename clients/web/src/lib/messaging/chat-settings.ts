@@ -57,6 +57,7 @@ export function updateChatSettings(chatId: string, patch: ChatSettings): AllSett
   if (!merged.archived) delete merged.archived;
   if (!merged.pinned) delete merged.pinned;
   if (!merged.draft) delete merged.draft;
+  if (!merged.unreadMark) delete merged.unreadMark;
   if (merged.mutedUntilMs !== undefined && merged.mutedUntilMs <= Date.now()) {
     delete merged.mutedUntilMs;
   }
