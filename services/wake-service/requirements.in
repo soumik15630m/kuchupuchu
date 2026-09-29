@@ -1,0 +1,23 @@
+# Compile this INSIDE the target image, not on the host:
+#
+#   docker run --rm -v "$(pwd)":/w -w /w python:3.12-slim sh -c \
+#     "pip install -q pip-tools && pip-compile --generate-hashes \
+#      --no-emit-index-url --output-file=requirements.txt requirements.in"
+#
+# uvicorn[standard] pulls uvloop on every platform except Windows, where it
+# carries `sys_platform != "win32"` and is skipped. A lock compiled on Windows
+# therefore omits uvloop and includes colorama -- and because the file is
+# hash-pinned, pip inside the Linux image refuses to resolve uvloop at install
+# time and `docker compose up --build` fails outright. The header pip-compile
+# writes records its own resolved defaults and is not runnable as printed;
+# this block is.
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+# The [crypto] extra, not bare pyjwt: VAPID tokens are ES256, and PyJWT raises
+# at sign time rather than import time when cryptography is missing -- which
+# would surface as pushes that are rejected, not as a service that won't start.
+pyjwt[crypto]==2.9.0
+python-dotenv==1.0.1
+httpx==0.27.2

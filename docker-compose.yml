@@ -117,6 +117,27 @@ services:
       - MESSAGING_DB_PATH=/data/messaging.sqlite
       - AUTH_DB_PATH=/data/app.db
       - MEDIA_PATH=/data/media
+      # Reached over the compose network, never through nginx: this is a
+      # service-to-service call authenticated by WAKE_INTERNAL_SECRET, and
+      # /wake is not exposed publicly at all.
+      - WAKE_SERVICE_URL=http://wake-service:8095
+    depends_on:
+      - auth-service
+    restart: unless-stopped
+
+  # §10.2. Wakes a device that has no live delivery socket, so a message or a
+  # call arrives when the app is closed. Holds push subscriptions and nothing
+  # about what was sent -- see services/wake-service/README.md.
+  wake-service:
+    build: ./services/wake-service
+    env_file: .env
+    volumes:
+      # Same volume, same reason as messaging-service: auth.sqlite read-only,
+      # so a revoked device stops being a valid push target immediately.
+      - sqlite-data:/data
+    environment:
+      - WAKE_DB_PATH=/data/wake.sqlite
+      - AUTH_DB_PATH=/data/app.db
     depends_on:
       - auth-service
     restart: unless-stopped

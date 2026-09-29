@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, EmailStr, Field
 
+from app import wake
 from app.auth import is_allowlisted, require_device, verify_access_token
 from app.hub import hub
 from app.messages import (
@@ -37,6 +38,15 @@ class SendBody(BaseModel):
     client_msg_id: str = Field(min_length=1, max_length=128)
     kind: str = Field(default="text", pattern="^(text|media|voice)$")
     recipients: list[Recipient] = Field(min_length=1, max_length=MAX_FANOUT)
+    # Which wake an offline recipient gets (§10.2). A ring needs high urgency
+    # and a short TTL or the push service may hold it past the point of being
+    # a ring at all, and this service cannot tell a call from a text on its own
+    # -- call signalling travels as an ordinary envelope, unreadable here.
+    #
+    # So the sender says. That does tell the server a call is starting, which
+    # is worth being explicit about: it already knows, because starting one
+    # means fetching a LiveKit room token first.
+    wake: str = Field(default="message", pattern="^(message|call)$")
 
 
 class ReceiptBody(BaseModel):
@@ -58,11 +68,15 @@ def _wire(row: dict) -> dict:
     }
 
 
-async def _deliver(row: dict) -> None:
-    """Pushes to a live socket if there is one. A device that is offline
-    simply leaves the row undelivered for /pending to pick up -- that is the
-    store-and-forward path, not a failure."""
-    await hub.send(row["to_device"], {"type": "message", "message": _wire(row)})
+async def _deliver(row: dict) -> bool:
+    """Pushes to a live socket if there is one. Returns whether one took it.
+
+    A device that is offline simply leaves the row undelivered for /pending to
+    pick up -- that is the store-and-forward path, not a failure. What the
+    return value drives is the wake (§10.2): store-and-forward is what makes
+    the message survive, a wake is what makes the member find out.
+    """
+    return await hub.send(row["to_device"], {"type": "message", "message": _wire(row)})
 
 
 @router.post("/send")
@@ -90,8 +104,18 @@ async def send(body: SendBody, caller: tuple[str, str] = Depends(require_device)
             raise HTTPException(status_code=413, detail=str(e))
         stored.append(row)
 
+    asleep = []
     for row in stored:
-        await _deliver(row)
+        if await _deliver(row):
+            continue
+        # Never the sender's own other devices. They receive the message --
+        # that is how a second device stays in sync -- but waking a laptop
+        # because its owner sent something from their phone is a notification
+        # for a message they just wrote.
+        if row["to_email"] != from_email:
+            asleep.append(row["to_device"])
+
+    wake.notify(asleep, body.wake)
 
     return {"status": "sent", "ids": [r["id"] for r in stored]}
 

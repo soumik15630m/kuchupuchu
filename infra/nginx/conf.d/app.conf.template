@@ -97,6 +97,15 @@ server {
         client_max_body_size 26m;
     }
 
+    # §10.2's push subscriptions. Only /push/* is routed: wake-service also
+    # serves /wake, which is service-to-service and must stay unreachable from
+    # outside -- a public /wake would let anyone make a member's phone buzz.
+    location /wake/push/ {
+        proxy_pass http://wake-service:8095/push/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
     location /healthz {
         return 200 "ok\n";
         add_header Content-Type text/plain;
