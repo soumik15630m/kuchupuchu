@@ -148,6 +148,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       // Through the ref, not the closure: this effect runs once, and the
       // directory fills in afterwards.
       nameFor: (email) => nameForRef.current(email),
+      onPinsChanged: () => setRevision((n) => n + 1),
       onMessage: (message) => {
         notifyMessage(message, nameForRef.current(message.chatId), {
           mentionsYou: mentionsMe(message, membersRef.current, myEmailRef.current),

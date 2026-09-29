@@ -21,6 +21,12 @@ const PATHS = {
   plus: "M12 5v14M5 12h14",
   image: "M3 5h18v14H3V5Zm0 10 5-5 4 4 3-3 6 6",
   chevron: "m9 6 6 6-6 6",
+  // Their own paths rather than a rotated `chevron`: a transform on an
+  // inline SVG rotates about the viewBox, not the glyph, so the arrows
+  // ended up off-centre in a 18px button.
+  chevronUp: "m6 15 6-6 6 6",
+  chevronDown: "m6 9 6 6 6-6",
+  info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-5v-5m0-3h.01",
   shield: "M12 2 4 5v6c0 5 3.4 9.2 8 11 4.6-1.8 8-6 8-11V5l-8-3Z",
   logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9",
   // The call bar previously drew data saver, screen share and PiP all with

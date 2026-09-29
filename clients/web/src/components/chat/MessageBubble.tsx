@@ -297,6 +297,9 @@ export function MessageBubble({
   onToggleSelect,
   onSelect,
   onViewOnceOpened,
+  onTogglePin,
+  onShowInfo,
+  pinned,
 }: {
   message: StoredMessage;
   mentionables?: Map<string, string>;
@@ -317,6 +320,11 @@ export function MessageBubble({
   onToggleSelect?: (message: StoredMessage) => void;
   /** Starts multi-select from the message menu. */
   onSelect?: (message: StoredMessage) => void;
+  onTogglePin?: (message: StoredMessage, pin: boolean) => void;
+  /** Only offered for outgoing messages: there is nothing to show about
+   * who read someone else's. */
+  onShowInfo?: (message: StoredMessage) => void;
+  pinned?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { email: myEmail } = useSession();
@@ -526,6 +534,30 @@ export function MessageBubble({
             >
               {message.starred ? "Unstar" : "Star"}
             </button>
+            {onTogglePin && (
+              <button
+                type="button"
+                className={styles.menuItem}
+                onClick={() => {
+                  onTogglePin(message, !pinned);
+                  setMenuOpen(false);
+                }}
+              >
+                {pinned ? "Unpin" : "Pin"}
+              </button>
+            )}
+            {message.outgoing && onShowInfo && (
+              <button
+                type="button"
+                className={styles.menuItem}
+                onClick={() => {
+                  onShowInfo(message);
+                  setMenuOpen(false);
+                }}
+              >
+                Info
+              </button>
+            )}
             {canEdit(message, Date.now(), myEmail ?? "") && (
               <button
                 type="button"

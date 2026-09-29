@@ -15,13 +15,23 @@ export interface ChatSettings {
    * record anyway because the control message is the sync mechanism, so every
    * device converges on the same value without a second store. */
   ephemeralMs?: number;
+  /** Message ids pinned to the top of the chat, newest first. Shared with
+   * the other side for the same reason the timer is: a pin only means
+   * anything if everyone sees the same one. */
+  pinnedIds?: string[];
 }
 
 type AllSettings = Record<string, ChatSettings>;
 
-/** Per-device, not synced. Archiving a chat on a laptop is a view preference,
- * not something the other person's device should learn about — and syncing it
- * would mean another message kind on the wire for no real benefit. */
+/** Mostly per-device and deliberately so. Archiving a chat on a laptop is a
+ * view preference, not something the other person's device should learn
+ * about, and syncing it would mean another message kind on the wire for no
+ * real benefit.
+ *
+ * `ephemeralMs` and `pinnedIds` are the exceptions: both only mean anything
+ * if everyone agrees on them, so both are kept in step by their own control
+ * message. They live in this record anyway because that message *is* the
+ * sync mechanism — nothing here initiates a sync, it only stores the result. */
 function readAll(): AllSettings {
   try {
     const raw = localStorage.getItem(KEY);
@@ -65,6 +75,7 @@ export function updateChatSettings(chatId: string, patch: ChatSettings): AllSett
   if (!merged.draft) delete merged.draft;
   if (!merged.unreadMark) delete merged.unreadMark;
   if (!merged.ephemeralMs) delete merged.ephemeralMs;
+  if (!merged.pinnedIds?.length) delete merged.pinnedIds;
   if (merged.mutedUntilMs !== undefined && merged.mutedUntilMs <= Date.now()) {
     delete merged.mutedUntilMs;
   }

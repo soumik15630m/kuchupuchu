@@ -20,6 +20,7 @@ import {
 import { loadSharing, shouldSendReadReceipt, shouldSendTyping } from "./privacy.mjs";
 import { settingsFor, updateChatSettings } from "./chat-settings";
 import { expiryFor, isKnownDuration, timerNotice } from "./ephemeral.mjs";
+import { applyPinChange } from "./pins.mjs";
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 import { deleteAvatar, putAvatar } from "../directory/avatar-store";
 
@@ -73,6 +74,7 @@ interface Content {
     | "history"
     | "view-once-opened"
     | "ephemeral-timer"
+    | "pin"
     | "theme"
     | "call-invite"
     | "call-cancel"
@@ -112,6 +114,8 @@ interface Content {
   viewOnce?: boolean;
   /** Set on `ephemeral-timer`: the agreed disappearing-messages duration. */
   durationMs?: number;
+  /** Set on `pin`: whether `target` is being pinned or unpinned. */
+  pin?: boolean;
   /** Set on any message sent while a timer is running. Absolute, and chosen
    * by the sender, so every copy expires at the same instant regardless of
    * whose clock is off. */
@@ -170,6 +174,8 @@ export interface MessagingEvents {
   /** A member's display name, for locally generated system notices. The
    * client has no directory of its own; the provider does. */
   nameFor: (email: string) => string;
+  /** The pinned set for a chat changed, here or on the other side. */
+  onPinsChanged: (chatId: string, pinnedIds: string[]) => void;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -397,6 +403,7 @@ export class MessagingClient {
       content.kind === "history" ||
       content.kind === "view-once-opened" ||
       content.kind === "ephemeral-timer" ||
+      content.kind === "pin" ||
       content.kind === "theme" ||
       content.kind === "call-invite" ||
       content.kind === "call-cancel" ||
@@ -551,6 +558,16 @@ export class MessagingClient {
         "timer-changed"
       );
       this.events.onMessage(notice);
+      return;
+    }
+
+    if (content.kind === "pin") {
+      if (!content.target) return;
+      const chatId = content.group ? content.group.id : fromEmail;
+      const current = settingsFor(chatId).pinnedIds ?? [];
+      const next = applyPinChange(current, content.target, content.pin !== false);
+      updateChatSettings(chatId, { pinnedIds: next });
+      this.events.onPinsChanged(chatId, next);
       return;
     }
 
@@ -800,7 +817,8 @@ export class MessagingClient {
       content.kind === "status-view" ||
       content.kind === "edit" ||
       content.kind === "view-once-opened" ||
-      content.kind === "ephemeral-timer";
+      content.kind === "ephemeral-timer" ||
+      content.kind === "pin";
     const chatId = targetChatId(target);
 
     // Control messages are not the conversation and must not disappear with
@@ -988,6 +1006,26 @@ export class MessagingClient {
       // timer regardless. Returning false rather than throwing so the caller
       // can say the other side has not been told yet, which is the part the
       // member cannot see for themselves.
+      return false;
+    }
+  }
+
+  /** Pins or unpins a message for everyone in the chat.
+   *
+   * Applied locally first for the same reason the timer is: the member sees
+   * the banner move immediately, and a send that fails leaves the pin where
+   * they put it rather than silently reverting under them.
+   */
+  async setPinned(target: ChatTarget, messageId: string, pin: boolean): Promise<boolean> {
+    const chatId = targetChatId(target);
+    const next = applyPinChange(settingsFor(chatId).pinnedIds ?? [], messageId, pin);
+    updateChatSettings(chatId, { pinnedIds: next });
+    this.events.onPinsChanged(chatId, next);
+
+    try {
+      await this.send(target, { kind: "pin", body: "", target: messageId, pin });
+      return true;
+    } catch {
       return false;
     }
   }

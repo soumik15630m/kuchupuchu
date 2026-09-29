@@ -18,6 +18,14 @@ import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
 import { settingsFor, updateChatSettings } from "@/lib/messaging/chat-settings";
 import { loadSharing, shouldShowTyping } from "@/lib/messaging/privacy.mjs";
 import { presenceLabel } from "@/lib/messaging/presence.mjs";
+import { pinnedMessages, prunePins } from "@/lib/messaging/pins.mjs";
+import {
+  describeProgress,
+  initialCursor,
+  matchIndices,
+  step,
+} from "@/lib/messaging/find-in-chat.mjs";
+import { MessageInfo } from "@/components/chat/MessageInfo";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
@@ -139,6 +147,11 @@ export default function ChatPage() {
   const [pendingJump, setPendingJump] = useState<string | null>(null);
   /** Null when not selecting; a set of message ids otherwise. */
   const [selection, setSelection] = useState<Set<string> | null>(null);
+  const [finding, setFinding] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCursor, setFindCursor] = useState(-1);
+  const [infoFor, setInfoFor] = useState<StoredMessage | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<string[]>([]);
   const lastCountRef = useRef(0);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -248,6 +261,38 @@ export default function ChatPage() {
   const style = wallpaperStyle(wp, imageUrl);
   let lastDay = "";
 
+  // Pins are pruned against what is actually here: a pin whose message was
+  // deleted or disappeared would otherwise render an undismissable empty row.
+  useEffect(() => {
+    const stored = settingsFor(email).pinnedIds ?? [];
+    const pruned = prunePins(stored, messages.map((m) => m.id));
+    if (pruned.length !== stored.length) updateChatSettings(email, { pinnedIds: pruned });
+    setPinnedIds(pruned);
+  }, [email, messages, revision]);
+
+  const pinned = useMemo(() => pinnedMessages(pinnedIds, messages), [pinnedIds, messages]);
+
+  const findHits = useMemo(
+    () => (finding ? matchIndices(messages, findQuery, searchableText) : []),
+    [finding, findQuery, messages]
+  );
+
+  // A new query restarts at the newest match rather than keeping a cursor
+  // that pointed into the previous result set.
+  useEffect(() => {
+    setFindCursor(initialCursor(findHits.length));
+  }, [findHits.length, findQuery]);
+
+  const stepFind = useCallback(
+    (direction: 1 | -1) => {
+      const next = step(findCursor, findHits.length, direction);
+      setFindCursor(next);
+      const hit = messages[findHits[next]];
+      if (hit) jumpTo(hit.id);
+    },
+    [findCursor, findHits, messages, jumpTo]
+  );
+
   return (
     <AppShell pane="detail">
       <Pane>
@@ -279,6 +324,18 @@ export default function ChatPage() {
               <button
                 className={paneStyles.iconButton}
                 type="button"
+                aria-label="Search in this chat"
+                aria-pressed={finding}
+                onClick={() => {
+                  setFinding((on) => !on);
+                  setFindQuery("");
+                }}
+              >
+                <Icon name="search" size={20} />
+              </button>
+              <button
+                className={paneStyles.iconButton}
+                type="button"
                 aria-label="Chat settings"
                 onClick={() => router.push(`/chats/${encodeURIComponent(email)}/settings`)}
               >
@@ -287,6 +344,80 @@ export default function ChatPage() {
             </>
           }
         />
+
+        {finding && (
+          <div className={styles.findBar} role="search">
+            <input
+              className={styles.findInput}
+              autoFocus
+              value={findQuery}
+              placeholder="Find in this chat"
+              aria-label="Find in this chat"
+              onChange={(e) => setFindQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setFinding(false);
+                if (e.key === "Enter") stepFind(e.shiftKey ? -1 : 1);
+              }}
+            />
+            <span className={styles.findCount} aria-live="polite">
+              {findQuery.trim() ? describeProgress(findCursor, findHits.length) : ""}
+            </span>
+            <button
+              type="button"
+              className={paneStyles.iconButton}
+              aria-label="Previous match"
+              disabled={findHits.length === 0}
+              onClick={() => stepFind(-1)}
+            >
+              <Icon name="chevronUp" size={18} />
+            </button>
+            <button
+              type="button"
+              className={paneStyles.iconButton}
+              aria-label="Next match"
+              disabled={findHits.length === 0}
+              onClick={() => stepFind(1)}
+            >
+              <Icon name="chevronDown" size={18} />
+            </button>
+            <button
+              type="button"
+              className={paneStyles.iconButton}
+              aria-label="Close search"
+              onClick={() => setFinding(false)}
+            >
+              <Icon name="close" size={18} />
+            </button>
+          </div>
+        )}
+
+        {pinned.length > 0 && (
+          <div className={styles.pinBanner}>
+            <Icon name="pin" size={14} />
+            <ul className={styles.pinList}>
+              {pinned.map((message) => (
+                <li key={message.id}>
+                  <button
+                    type="button"
+                    className={styles.pinItem}
+                    onClick={() => jumpTo(message.id)}
+                    title={searchableText(message)}
+                  >
+                    {searchableText(message)}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.pinRemove}
+                    aria-label={`Unpin ${searchableText(message).slice(0, 40)}`}
+                    onClick={() => chat.target && void client?.setPinned(chat.target, message.id, false)}
+                  >
+                    <Icon name="close" size={13} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {ready && !online && <div className={styles.offline}>Offline — messages will send when reconnected</div>}
 
@@ -364,6 +495,11 @@ export default function ChatPage() {
                       }
                       onRetry={() => void client?.retryOutbox()}
                       onEdit={setEditing}
+                      pinned={pinnedIds.includes(message.id)}
+                      onTogglePin={(msg, pin) =>
+                        chat.target && void client?.setPinned(chat.target, msg.id, pin)
+                      }
+                      onShowInfo={setInfoFor}
                       onForward={setForwarding}
                       onSelect={(msg) => setSelection(new Set([msg.id]))}
                       onStar={async (msg) => {
@@ -533,6 +669,13 @@ export default function ChatPage() {
             </div>
           </>
         )}
+
+        {infoFor && (
+
+          <MessageInfo message={infoFor} nameFor={nameFor} onClose={() => setInfoFor(null)} />
+
+        )}
+
 
         {forwarding && (
           <ForwardSheet

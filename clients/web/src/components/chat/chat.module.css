@@ -1577,3 +1577,158 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Find in this chat. Sits under the header rather than replacing it, so the
+   name of who you are talking to does not disappear while searching. */
+.findBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.findInput {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--input-bg, var(--bg));
+  color: var(--text);
+  font-size: 14px;
+}
+
+.findInput:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.findCount {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pinned messages. Capped at three by MAX_PINS, so this never needs to
+   scroll and never needs a "show all". */
+.pinBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.pinList {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pinList li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pinItem {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  /* One line each: a pinned paragraph would push the conversation off screen,
+     which is the opposite of what pinning is for. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pinRemove {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.pinRemove:hover {
+  background: var(--hover);
+}
+
+/* Message info. */
+.infoTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.infoPreview {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bubble-out, var(--panel));
+  font-size: 14px;
+  color: var(--text);
+  max-height: 120px;
+  overflow: hidden;
+}
+
+.infoList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.infoRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.infoName {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.infoState {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.infoState[data-state="read"] {
+  color: var(--accent);
+}
+
+.infoEmpty,
+.infoNote {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
