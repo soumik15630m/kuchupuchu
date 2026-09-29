@@ -10,6 +10,10 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "/auth";
 // trailing-slash proxy_pass, so paths here are service-root relative too.
 export const MSG_BASE = process.env.NEXT_PUBLIC_MSG_BASE ?? "/msg";
 
+// wake-service (§10.2). nginx routes only /wake/push/ here; the service's own
+// /wake endpoint is service-to-service and deliberately not proxied.
+export const WAKE_BASE = process.env.NEXT_PUBLIC_WAKE_BASE ?? "/wake";
+
 const REFRESH_KEY = "kuchupuchu:refresh";
 const ACCESS_KEY = "kuchupuchu:access";
 const DEVICE_KEY = "kuchupuchu:device";
@@ -289,10 +293,21 @@ export class Session {
   /** The messaging service sits behind a different nginx prefix, so these
    * bypass `authed`'s API_BASE. They still need the same 401-retry, hence
    * `msgAuthed` rather than a bare fetch. */
-  private async msgAuthed<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private msgAuthed<T>(path: string, init: RequestInit = {}): Promise<T> {
+    return this.atBase(MSG_BASE, path, init);
+  }
+
+  /** Same again for wake-service, which nginx routes under its own prefix.
+   * Only `/push/*` is reachable from a browser — `/wake` itself is
+   * service-to-service and is not proxied at all. */
+  private wakeAuthed<T>(path: string, init: RequestInit = {}): Promise<T> {
+    return this.atBase(WAKE_BASE, path, init);
+  }
+
+  private async atBase<T>(base: string, path: string, init: RequestInit = {}): Promise<T> {
     if (!isUsable(this.accessToken)) await this.refresh();
     const send = async (token: string): Promise<T> => {
-      const res = await fetch(`${MSG_BASE}${path}`, {
+      const res = await fetch(`${base}${path}`, {
         ...init,
         headers: {
           ...(init.body instanceof FormData ? {} : { "content-type": "application/json" }),
@@ -316,6 +331,22 @@ export class Session {
 
   sendMessage(body: SendMessageBody): Promise<{ status: string; ids: string[] }> {
     return this.msgAuthed("/send", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  vapidPublicKey(): Promise<{ publicKey: string }> {
+    return this.wakeAuthed("/push/key");
+  }
+
+  registerPush(body: { endpoint: string; p256dh: string; auth: string }): Promise<{ status: string }> {
+    return this.wakeAuthed("/push/subscription", { method: "PUT", body: JSON.stringify(body) });
+  }
+
+  unregisterPush(): Promise<{ status: string; removed: boolean }> {
+    return this.wakeAuthed("/push/subscription", { method: "DELETE" });
+  }
+
+  pushStatus(): Promise<{ subscribed: boolean; createdAt: string | null; lastPushAt: string | null }> {
+    return this.wakeAuthed("/push/subscription");
   }
 
   pendingMessages(): Promise<{ messages: WireMessage[] }> {
@@ -490,6 +521,11 @@ export interface SendMessageBody {
   client_msg_id: string;
   kind: string;
   recipients: { email: string; device_id: string; envelope: string }[];
+  /** Which wake an offline recipient gets (§10.2). The server cannot tell a
+   * ring from a text — call signalling travels as an ordinary envelope it
+   * cannot read — so the sender says, and a ring gets high urgency and a
+   * short TTL instead of being held by the push service. */
+  wake?: "message" | "call";
 }
 
 export interface DeviceRow {

@@ -14,9 +14,14 @@ const nextConfig = {
     if (process.env.NODE_ENV === "production") return [];
     const auth = process.env.DEV_AUTH_ORIGIN ?? "http://127.0.0.1:8080";
     const messaging = process.env.DEV_MSG_ORIGIN ?? "http://127.0.0.1:8090";
+    const wake = process.env.DEV_WAKE_ORIGIN ?? "http://127.0.0.1:8095";
     return [
       { source: "/auth/:path*", destination: `${auth}/:path*` },
       { source: "/msg/:path*", destination: `${messaging}/:path*` },
+      // Only /push/*, matching what nginx exposes. wake-service's own /wake
+      // is service-to-service, and a dev rewrite reaching it would make it
+      // callable from a browser here but not in production.
+      { source: "/wake/push/:path*", destination: `${wake}/push/:path*` },
     ];
   },
   async headers() {

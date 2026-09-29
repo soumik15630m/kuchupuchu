@@ -3,11 +3,16 @@ import { describeMessage, type StoredMessage } from "./messaging/store";
 
 const ENABLED_KEY = "kuchupuchu:notifications";
 
-/** Web notifications only, deliberately not Web Push. Push would need the
- * wake service (§10.2) and a VAPID key pair that do not exist yet, and would
- * route message metadata through a third-party push endpoint. This fires only
- * while the page is open, which is the honest limit of what the web client can
- * do today. */
+/** In-page notifications, for a tab that is open but not looked at.
+ *
+ * These are the rich ones: they name the sender and preview the message,
+ * because the page has already decrypted it. A closed or frozen tab is
+ * wake-service's job (§10.2, `lib/push/register.ts`), and what it can show is
+ * deliberately much less -- the push payload carries no sender and no
+ * content, so the worker says only "New message" until the app is open.
+ *
+ * The two never fire together: the worker pings the page first and stays
+ * quiet if anything answers. */
 export function notificationsAllowed(): boolean {
   if (typeof Notification === "undefined") return false;
   if (Notification.permission !== "granted") return false;

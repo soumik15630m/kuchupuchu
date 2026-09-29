@@ -823,6 +823,10 @@ export class MessagingClient {
               : content.kind
             : "text",
         recipients: targets,
+        // Only the invite. A cancel or a decline arriving late is harmless;
+        // a ring arriving late is a missed call, so it is the one thing that
+        // asks the push service for urgent treatment (§10.2).
+        ...(content.kind === "call-invite" ? { wake: "call" as const } : {}),
       });
 
       if (!makesBubble) return stored;

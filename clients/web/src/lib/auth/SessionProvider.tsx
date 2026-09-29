@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { Session, clearSession, storedEmail, storedRefreshToken, type Tokens } from "../api/client";
+import { disablePush } from "../push/register";
 import { noteLocalOwner } from "./local-data";
 
 type Status = "loading" | "authenticated" | "anonymous";
@@ -26,6 +27,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [, forceRender] = useState(0);
 
   const signOut = useCallback(() => {
+    // Before the tokens go, and not awaited: a device that has been signed
+    // out must stop being woken, and leaving the subscription behind would
+    // buzz whoever holds this browser next. A failed call self-heals -- the
+    // next push to a dead endpoint 410s and wake-service drops the row.
+    void disablePush(sessionRef.current);
     clearSession();
     sessionRef.current = null;
     setEmail(null);
