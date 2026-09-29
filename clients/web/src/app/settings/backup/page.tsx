@@ -14,6 +14,8 @@ import { useMessaging } from "@/lib/messaging/MessagingProvider";
 
 import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
+import { loadDrillState, runDrill, type DrillState } from "@/lib/backup/drill-service";
+import { describeResult, isStale } from "@/lib/backup/drill.mjs";
 
 const MIN_PASSPHRASE = 8;
 
@@ -64,6 +66,8 @@ export default function BackupPage() {
   const [progress, setProgress] = useState<BackupProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [drill, setDrill] = useState<DrillState>(() => loadDrillState(false));
+  const [drillRunning, setDrillRunning] = useState(false);
 
   const loadMeta = useCallback(() => {
     if (!session) return;
@@ -76,7 +80,12 @@ export default function BackupPage() {
   useEffect(loadMeta, [loadMeta]);
 
   useEffect(() => {
-    storedCredential().then((c) => setHasKey(Boolean(c)));
+    storedCredential().then((c) => {
+      setHasKey(Boolean(c));
+      // Reloaded once the answer is known: whether a passphrase is stored is
+      // what decides if the drill can run on its own.
+      setDrill(loadDrillState(Boolean(c)));
+    });
   }, []);
 
   function patchSettings(next: Partial<BackupSettings>) {
@@ -393,6 +402,59 @@ export default function BackupPage() {
               backup is permanently unreadable — by us, by you, by anyone. Write it down somewhere
               safe.
               {hasKey ? " Changing it means the next backup replaces the one on the server." : ""}
+            </p>
+          </div>
+
+          <div className={settingsStyles.divider} />
+
+          <div className={themeStyles.section}>
+            <h2 className={themeStyles.sectionTitle}>Can it actually be restored?</h2>
+            <p className={themeStyles.hint} role="status">
+              {drillRunning
+                ? "Checking — downloading and opening the backup…"
+                : describeResult(drill.last, Date.now(), (ms) => new Date(ms).toLocaleDateString())}
+            </p>
+
+            {drill.last && !drill.last.ok && drill.last.problems.length > 1 && (
+              <ul className={themeStyles.hint} style={{ paddingLeft: 18 }}>
+                {drill.last.problems.slice(1).map((problem) => (
+                  <li key={problem}>{problem}</li>
+                ))}
+              </ul>
+            )}
+
+            {drill.last?.ok && drill.last.kdfIterations && (
+              <p className={themeStyles.hint}>
+                Sealed with {drill.last.kdfIterations.toLocaleString()} rounds of key
+                strengthening, and opened without touching anything on this device.
+              </p>
+            )}
+
+            <button
+              className={themeStyles.reset}
+              type="button"
+              disabled={drillRunning || busy !== null}
+              onClick={async () => {
+                if (!session || !email) return;
+                setDrillRunning(true);
+                try {
+                  await runDrill(session, email, restorePass.trim() || undefined);
+                } finally {
+                  setDrill(loadDrillState(hasKey === true));
+                  setDrillRunning(false);
+                }
+              }}
+            >
+              {drillRunning ? "Checking…" : "Check the backup now"}
+            </button>
+
+            <p className={themeStyles.hint}>
+              Downloads the backup, opens it, and reads what is inside — then throws it away.
+              Nothing on this device is changed, which is why it is safe to run whenever. A backup
+              nobody has ever opened is a hope, not a backup.
+              {isStale(drill.lastVerifiedAtMs, Date.now()) && drill.lastVerifiedAtMs
+                ? " This one has not been checked in over a week."
+                : ""}
             </p>
           </div>
 

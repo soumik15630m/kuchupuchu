@@ -154,6 +154,30 @@ export function readEnvelopeHeader(bytes) {
  * @param {string} passphrase
  * @returns {Promise<Uint8Array>}
  */
+/** Opens with an already-derived key, for the restore drill.
+ *
+ * The scheduled-backup credential holds a non-extractable CryptoKey and no
+ * passphrase -- deliberately, so a stored credential cannot give the
+ * passphrase back. The drill therefore has to decrypt with the key it has.
+ *
+ * The key only works when its salt matches the envelope's, which is exactly
+ * the check worth making: a backup sealed under a different passphrase fails
+ * here, and that failure is the whole point of running a drill.
+ */
+export async function openBackupWithKey(bytes, key) {
+  const header = readEnvelopeHeader(bytes);
+  try {
+    const plaintext = await subtle().decrypt(
+      { name: "AES-GCM", iv: header.iv },
+      key,
+      bytes.subarray(header.bodyOffset)
+    );
+    return new Uint8Array(plaintext);
+  } catch {
+    throw new BackupError("that key did not open the backup, or the file is damaged");
+  }
+}
+
 export async function openBackup(bytes, passphrase) {
   const header = readEnvelopeHeader(bytes);
   const key = await deriveKey(passphrase, header.salt, header.iterations);

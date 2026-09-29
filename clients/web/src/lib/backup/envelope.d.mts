@@ -33,3 +33,5 @@ export function readEnvelopeHeader(bytes: Uint8Array): {
 };
 
 export function openBackup(bytes: Uint8Array, passphrase: string): Promise<Uint8Array>;
+
+export function openBackupWithKey(bytes: Uint8Array, key: CryptoKey): Promise<Uint8Array>;
