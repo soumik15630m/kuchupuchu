@@ -26,6 +26,9 @@ import {
   step,
 } from "@/lib/messaging/find-in-chat.mjs";
 import { MessageInfo } from "@/components/chat/MessageInfo";
+import { AlbumViewer, MessageAlbum } from "@/components/chat/MessageAlbum";
+import { albumKey, groupIntoAlbums } from "@/lib/messaging/albums.mjs";
+import { getCachedMedia } from "@/lib/messaging/media-cache";
 import { typingLabel, typistsIn } from "@/lib/messaging/typing.mjs";
 import { useChatTarget } from "@/lib/messaging/useChatTarget";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
@@ -152,6 +155,24 @@ export default function ChatPage() {
   const [findCursor, setFindCursor] = useState(-1);
   const [infoFor, setInfoFor] = useState<StoredMessage | null>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
+  const [viewing, setViewing] = useState<StoredMessage | null>(null);
+
+  // Album cells resolve their own blobs. Cached first, so scrolling back
+  // through an album does not re-fetch what is already here.
+  const albumUrlFor = useCallback(
+    async (message: StoredMessage) => {
+      if (!message.media) return undefined;
+      try {
+        const blob =
+          (await getCachedMedia(message.media.mediaId)) ??
+          (client ? await client.fetchMedia(message.media) : null);
+        return blob ? URL.createObjectURL(blob) : undefined;
+      } catch {
+        return undefined;
+      }
+    },
+    [client]
+  );
   const lastCountRef = useRef(0);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -454,17 +475,28 @@ export default function ChatPage() {
                   Load earlier messages
                 </button>
               )}
-              {windowed.map((message) => {
+              {groupIntoAlbums(windowed).map((row) => {
+                const message = row.type === "album" ? row.messages[0] : row.message;
                 const day = dayLabel(message.sentAtMs);
                 const separator = day !== lastDay ? day : null;
                 lastDay = day;
                 const showUnreadMark = message.id === firstUnreadId;
                 return (
-                  <div key={message.id} style={{ display: "contents" }}>
+                  <div
+                    key={row.type === "album" ? albumKey(row.messages) : message.id}
+                    style={{ display: "contents" }}
+                  >
                     {separator && <span className={styles.daySeparator}>{separator}</span>}
                     {showUnreadMark && (
                       <span className={styles.unreadMark}>Unread messages</span>
                     )}
+                    {row.type === "album" ? (
+                      <MessageAlbum
+                        messages={row.messages}
+                        urlFor={albumUrlFor}
+                        onOpen={setViewing}
+                      />
+                    ) : (
                     <MessageBubble
                       onJumpTo={jumpTo}
                       selectable={selection !== null}
@@ -507,6 +539,7 @@ export default function ChatPage() {
                         if (updated) setMessages((prev) => prev.map((m) => (m.id === msg.id ? updated : m)));
                       }}
                     />
+                    )}
                   </div>
                 );
               })}
@@ -669,6 +702,13 @@ export default function ChatPage() {
             </div>
           </>
         )}
+
+        {viewing && (
+
+          <AlbumViewer message={viewing} urlFor={albumUrlFor} onClose={() => setViewing(null)} />
+
+        )}
+
 
         {infoFor && (
 

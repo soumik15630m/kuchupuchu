@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { AppShell } from "@/components/shell/AppShell";
@@ -18,6 +18,7 @@ import {
 } from "@/lib/groups";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { clearChat } from "@/lib/messaging/store";
+import { download, exportChat } from "@/lib/export/service";
 import { EPHEMERAL_DURATIONS } from "@/lib/messaging/ephemeral.mjs";
 import { settingsFor } from "@/lib/messaging/chat-settings";
 import { acknowledgePin, pinsFor, type IdentityPin } from "@/lib/crypto/identity-pins";
@@ -45,6 +46,34 @@ export default function ChatSettingsPage() {
   const [ephemeralMs, setEphemeralMs] = useState(0);
   const [savingTimer, setSavingTimer] = useState(false);
   const [timerNote, setTimerNote] = useState<"unsynced" | null>(null);
+  const [exporting, setExporting] = useState<"text" | "media" | null>(null);
+  const [exportNote, setExportNote] = useState<string | null>(null);
+
+  const runExport = useCallback(
+    async (includeMedia: boolean) => {
+      setExporting(includeMedia ? "media" : "text");
+      setExportNote(null);
+      try {
+        const result = await exportChat(email, {
+          chatName: name,
+          nameFor,
+          includeMedia,
+          client,
+        });
+        download(result.blob, result.filename);
+        setExportNote(
+          result.missingMedia > 0
+            ? `Saved ${result.filename} — ${result.messageCount} messages. ${result.missingMedia} attachment${result.missingMedia === 1 ? "" : "s"} could not be included; the file is no longer on this device or the server.`
+            : `Saved ${result.filename} — ${result.messageCount} messages.`
+        );
+      } catch {
+        setExportNote("Couldn't build the export. Try again.");
+      } finally {
+        setExporting(null);
+      }
+    },
+    [email, name, nameFor, client]
+  );
 
   // Read on mount rather than held in the provider: the peer can change it
   // too, and the control message writes straight to the same store.
@@ -247,6 +276,43 @@ export default function ChatSettingsPage() {
               </div>
             </>
           )}
+
+          <div className={settingsStyles.divider} />
+          <div className={themeStyles.section}>
+            <h2 className={themeStyles.sectionTitle}>Export this chat</h2>
+            <div className={themeStyles.options}>
+              <button
+                type="button"
+                className={themeStyles.radio}
+                disabled={exporting !== null}
+                onClick={() => void runExport(false)}
+              >
+                <span className={themeStyles.radioLabel}>
+                  {exporting === "text" ? "Preparing…" : "Text only"}
+                </span>
+              </button>
+              <button
+                type="button"
+                className={themeStyles.radio}
+                disabled={exporting !== null}
+                onClick={() => void runExport(true)}
+              >
+                <span className={themeStyles.radioLabel}>
+                  {exporting === "media" ? "Preparing…" : "With photos and files"}
+                </span>
+              </button>
+            </div>
+            {exportNote && (
+              <p className={themeStyles.hint} role="status">
+                {exportNote}
+              </p>
+            )}
+            <p className={themeStyles.hint}>
+              Writes a readable copy to your downloads. Unlike a backup this is{" "}
+              <strong>not encrypted</strong> — anything that reads that folder can read the
+              conversation. Messages that have already disappeared are not in it.
+            </p>
+          </div>
 
           <div className={settingsStyles.divider} />
           <div className={themeStyles.section}>
