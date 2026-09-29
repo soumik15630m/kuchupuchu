@@ -13,6 +13,7 @@ import { blockSaveGestures, useScreenGuard } from "@/lib/privacy/useScreenGuard"
 import { ContactCard, LocationCard } from "@/components/chat/LocationCard";
 import { VoicePlayer } from "@/components/chat/VoicePlayer";
 import { useSession } from "@/lib/auth/SessionProvider";
+import { canEdit } from "@/lib/messaging/ephemeral.mjs";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import type { StoredMessage } from "@/lib/messaging/store";
 
@@ -415,6 +416,17 @@ export function MessageBubble({
 
         <span className={styles.meta}>
           {message.starred && <Icon name="star" size={11} />}
+          {message.expiresAtMs && (
+            // Marked on the bubble, not just announced once when the timer
+            // was set: someone scrolling back has no other way to tell which
+            // messages are on a clock.
+            <span
+              className={styles.edited}
+              title={`Disappears ${new Date(message.expiresAtMs).toLocaleString()}`}
+            >
+              ⏳
+            </span>
+          )}
           {message.editedAtMs && <span className={styles.edited}>edited</span>}
           {formatTime(message.sentAtMs)}
           {message.outgoing && (
@@ -514,7 +526,7 @@ export function MessageBubble({
             >
               {message.starred ? "Unstar" : "Star"}
             </button>
-            {message.outgoing && message.kind === "text" && (
+            {canEdit(message, Date.now(), myEmail ?? "") && (
               <button
                 type="button"
                 className={styles.menuItem}

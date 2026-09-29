@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { deviceId } from "../api/client";
 import { useSession } from "../auth/SessionProvider";
 import { useDirectory } from "../directory/DirectoryProvider";
+import { useExpirySweep } from "./useExpirySweep";
 import { notifyMessage, setBadge } from "../notifications";
 import { MessagingClient, type CallSignal, type PresenceEntry } from "./client";
 import { recordMissedCall } from "../call/call-log";
@@ -144,6 +145,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     };
 
     const client = new MessagingClient(session, deviceId(), {
+      // Through the ref, not the closure: this effect runs once, and the
+      // directory fills in afterwards.
+      nameFor: (email) => nameForRef.current(email),
       onMessage: (message) => {
         notifyMessage(message, nameForRef.current(message.chatId), {
           mentionsYou: mentionsMe(message, membersRef.current, myEmailRef.current),
@@ -232,6 +236,15 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setTyping(emptyTyping());
     };
   }, [status, session, refreshChats, refreshStatuses]);
+
+  // Disappearing messages. Bumping the revision is what makes an open chat
+  // drop the bubbles that just went, rather than showing them until the next
+  // message arrives.
+  const onSwept = useCallback(() => {
+    setRevision((n) => n + 1);
+    refreshChats();
+  }, [refreshChats]);
+  useExpirySweep(onSwept);
 
   const value = useMemo<MessagingContextValue>(
     () => ({

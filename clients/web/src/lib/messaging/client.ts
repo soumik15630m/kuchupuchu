@@ -18,6 +18,8 @@ import {
   type StoredMessage,
 } from "./store";
 import { loadSharing, shouldSendReadReceipt, shouldSendTyping } from "./privacy.mjs";
+import { settingsFor, updateChatSettings } from "./chat-settings";
+import { expiryFor, isKnownDuration, timerNotice } from "./ephemeral.mjs";
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 import { deleteAvatar, putAvatar } from "../directory/avatar-store";
 
@@ -70,6 +72,7 @@ interface Content {
     | "history-request"
     | "history"
     | "view-once-opened"
+    | "ephemeral-timer"
     | "theme"
     | "call-invite"
     | "call-cancel"
@@ -107,6 +110,12 @@ interface Content {
   to?: string;
   /** Set on `media`: the attachment may be opened once, then it is gone. */
   viewOnce?: boolean;
+  /** Set on `ephemeral-timer`: the agreed disappearing-messages duration. */
+  durationMs?: number;
+  /** Set on any message sent while a timer is running. Absolute, and chosen
+   * by the sender, so every copy expires at the same instant regardless of
+   * whose clock is off. */
+  expiresAtMs?: number;
   /** Set on `history`: a batch of this account's own past messages, sent
    * device-to-device when a new device is linked. The server stores these as
    * ordinary ciphertext and learns nothing it did not already hold. */
@@ -158,6 +167,9 @@ export interface MessagingEvents {
   onCallSignal: (signal: CallSignal) => void;
   /** `replace` distinguishes the connect-time snapshot from a single update. */
   onPresence: (entries: PresenceEntry[], replace: boolean) => void;
+  /** A member's display name, for locally generated system notices. The
+   * client has no directory of its own; the provider does. */
+  nameFor: (email: string) => string;
 }
 
 const RECONNECT_BASE_MS = 1000;
@@ -384,6 +396,7 @@ export class MessagingClient {
       content.kind === "history-request" ||
       content.kind === "history" ||
       content.kind === "view-once-opened" ||
+      content.kind === "ephemeral-timer" ||
       content.kind === "theme" ||
       content.kind === "call-invite" ||
       content.kind === "call-cancel" ||
@@ -443,6 +456,10 @@ export class MessagingClient {
       link: content.link,
       viewOnce: content.viewOnce,
       sentAtMs,
+      // The sender's instant, taken as given. Recomputing it from a local
+      // duration would let a recipient whose timer is set differently -- or
+      // whose clock is slow -- keep the message longer than the sender meant.
+      ...(typeof content.expiresAtMs === "number" ? { expiresAtMs: content.expiresAtMs } : {}),
       status: fromSelf ? "sent" : "delivered",
     };
     await putMessage(stored);
@@ -512,6 +529,28 @@ export class MessagingClient {
         video: content.call.video,
         sentAtMs: content.sentAtMs,
       });
+      return;
+    }
+
+    if (content.kind === "ephemeral-timer") {
+      const durationMs = content.durationMs ?? 0;
+      // A peer choosing an arbitrary duration could set one this client has
+      // no label for and no way to undo from the picker. Only the offered
+      // ladder is accepted.
+      if (!isKnownDuration(durationMs)) return;
+
+      const chatId = content.group ? content.group.id : fromEmail;
+      const current = settingsFor(chatId).ephemeralMs ?? 0;
+      if (current === durationMs) return;
+      updateChatSettings(chatId, { ephemeralMs: durationMs });
+
+      const mine = fromEmail.toLowerCase() === this.api.email.toLowerCase();
+      const notice = await addSystemNotice(
+        chatId,
+        timerNotice(mine ? "You" : this.events.nameFor(fromEmail), durationMs),
+        "timer-changed"
+      );
+      this.events.onMessage(notice);
       return;
     }
 
@@ -760,12 +799,22 @@ export class MessagingClient {
       content.kind === "deletion" ||
       content.kind === "status-view" ||
       content.kind === "edit" ||
-      content.kind === "view-once-opened";
+      content.kind === "view-once-opened" ||
+      content.kind === "ephemeral-timer";
     const chatId = targetChatId(target);
+
+    // Control messages are not the conversation and must not disappear with
+    // it: a reaction that vanished would leave the emoji stuck on a bubble,
+    // and a timer change that vanished would un-say itself.
+    const expiresAtMs =
+      isControl || content.kind === "status"
+        ? undefined
+        : expiryFor(sentAtMs, settingsFor(chatId).ephemeralMs ?? 0);
 
     const body: Content = {
       ...content,
       sentAtMs,
+      ...(expiresAtMs ? { expiresAtMs } : {}),
       ...(target.kind === "group"
         ? { group: toRef(target.group) }
         : { to: target.email }),
@@ -785,6 +834,7 @@ export class MessagingClient {
       link: content.link,
       viewOnce: content.viewOnce,
       sentAtMs,
+      ...(expiresAtMs ? { expiresAtMs } : {}),
       status: "sending",
       recipients:
         target.kind === "group"
@@ -916,6 +966,32 @@ export class MessagingClient {
    *
    * Addressed to nobody: fanoutTargets always adds the sender's own devices,
    * so an empty audience reaches exactly them and no one else. */
+  /** Sets the disappearing-messages timer for a chat and tells the other side.
+   *
+   * Applied locally first, so the setting holds even if the send fails --
+   * the alternative is a member who turned the timer on, saw nothing happen,
+   * and kept talking. Both sides converge on the control message.
+   */
+  async setEphemeralTimer(target: ChatTarget, durationMs: number): Promise<boolean> {
+    if (!isKnownDuration(durationMs)) throw new Error("unknown disappearing-messages duration");
+    const chatId = targetChatId(target);
+    updateChatSettings(chatId, { ephemeralMs: durationMs });
+
+    const notice = await addSystemNotice(chatId, timerNotice("You", durationMs), "timer-changed");
+    this.events.onMessage(notice);
+
+    try {
+      await this.send(target, { kind: "ephemeral-timer", body: "", durationMs });
+      return true;
+    } catch {
+      // The local setting stands -- messages sent from here will carry the
+      // timer regardless. Returning false rather than throwing so the caller
+      // can say the other side has not been told yet, which is the part the
+      // member cannot see for themselves.
+      return false;
+    }
+  }
+
   async syncTheme(theme: Record<string, unknown>): Promise<void> {
     const targets = await this.fanoutTargets(
       [],

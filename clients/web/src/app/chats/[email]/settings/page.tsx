@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { AppShell } from "@/components/shell/AppShell";
@@ -18,6 +18,8 @@ import {
 } from "@/lib/groups";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { clearChat } from "@/lib/messaging/store";
+import { EPHEMERAL_DURATIONS } from "@/lib/messaging/ephemeral.mjs";
+import { settingsFor } from "@/lib/messaging/chat-settings";
 import { acknowledgePin, pinsFor, type IdentityPin } from "@/lib/crypto/identity-pins";
 import { isGroupId as isGroup } from "@/lib/groups";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
@@ -31,7 +33,7 @@ export default function ChatSettingsPage() {
   const router = useRouter();
   const email = decodeURIComponent(params.email);
   const { theme, setWallpaper } = useTheme();
-  const { refreshChats, client } = useMessaging();
+  const { refreshChats, client, revision } = useMessaging();
   const { email: myEmail } = useSession();
   const { nameFor, others } = useDirectory();
   const [name, setName] = useState(email);
@@ -40,6 +42,20 @@ export default function ChatSettingsPage() {
   const [pins, setPins] = useState<IdentityPin[]>([]);
   const [resetting, setResetting] = useState(false);
   const [resetNote, setResetNote] = useState<string | null>(null);
+  const [ephemeralMs, setEphemeralMs] = useState(0);
+  const [savingTimer, setSavingTimer] = useState(false);
+  const [timerNote, setTimerNote] = useState<"unsynced" | null>(null);
+
+  // Read on mount rather than held in the provider: the peer can change it
+  // too, and the control message writes straight to the same store.
+  useEffect(() => {
+    setEphemeralMs(settingsFor(email).ephemeralMs ?? 0);
+  }, [email, revision]);
+
+  const target = useMemo(
+    () => (group ? { kind: "group" as const, group } : isGroupId(email) ? null : { kind: "direct" as const, email }),
+    [group, email]
+  );
 
   useEffect(() => {
     if (isGroupId(email)) {
@@ -231,6 +247,53 @@ export default function ChatSettingsPage() {
               </div>
             </>
           )}
+
+          <div className={settingsStyles.divider} />
+          <div className={themeStyles.section}>
+            <h2 className={themeStyles.sectionTitle}>Disappearing messages</h2>
+            <div
+              className={themeStyles.options}
+              role="radiogroup"
+              aria-label="Disappearing messages"
+            >
+              {EPHEMERAL_DURATIONS.map((option) => (
+                <button
+                  key={option.ms}
+                  type="button"
+                  role="radio"
+                  aria-checked={ephemeralMs === option.ms}
+                  className={themeStyles.radio}
+                  disabled={savingTimer}
+                  onClick={async () => {
+                    if (!target || option.ms === ephemeralMs) return;
+                    setSavingTimer(true);
+                    setEphemeralMs(option.ms);
+                    try {
+                      const synced = await client?.setEphemeralTimer(target, option.ms);
+                      setTimerNote(synced === false ? "unsynced" : null);
+                      refreshChats();
+                    } finally {
+                      setSavingTimer(false);
+                    }
+                  }}
+                >
+                  <span className={themeStyles.radioMark} />
+                  <span className={themeStyles.radioLabel}>{option.label}</span>
+                </button>
+              ))}
+            </div>
+            {timerNote === "unsynced" && (
+              <p className={themeStyles.hint} role="alert">
+                Saved here, but the other side hasn&apos;t been told yet — they have no device
+                reachable right now. Messages you send will still carry the timer.
+              </p>
+            )}
+            <p className={themeStyles.hint}>
+              New messages disappear from everyone&apos;s device after this long. The clock starts
+              when a message is sent, not when it&apos;s read, so both sides lose it at the same
+              moment. Messages already sent keep whatever timer they were sent with.
+            </p>
+          </div>
 
           {pins.length > 0 && (
             <>

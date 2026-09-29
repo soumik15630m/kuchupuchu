@@ -9,6 +9,12 @@ export interface ChatSettings {
   /** Set by "mark as unread". Cleared when the chat is next opened, so it is
    * a reminder rather than a state the member has to undo by hand. */
   unreadMark?: boolean;
+  /** Disappearing-messages timer, in ms. Unlike everything else here this is
+   * NOT a per-device view preference: it is agreed between both sides and
+   * kept in step by an `ephemeral-timer` control message. It lives in this
+   * record anyway because the control message is the sync mechanism, so every
+   * device converges on the same value without a second store. */
+  ephemeralMs?: number;
 }
 
 type AllSettings = Record<string, ChatSettings>;
@@ -58,6 +64,7 @@ export function updateChatSettings(chatId: string, patch: ChatSettings): AllSett
   if (!merged.pinned) delete merged.pinned;
   if (!merged.draft) delete merged.draft;
   if (!merged.unreadMark) delete merged.unreadMark;
+  if (!merged.ephemeralMs) delete merged.ephemeralMs;
   if (merged.mutedUntilMs !== undefined && merged.mutedUntilMs <= Date.now()) {
     delete merged.mutedUntilMs;
   }

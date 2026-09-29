@@ -1,4 +1,5 @@
 import { RANK, applyReceipt } from "./receipts.mjs";
+import { expiredAmong } from "./ephemeral.mjs";
 import { openStore } from "../idb";
 
 export type MessageStatus = "sending" | "sent" | "delivered" | "read" | "failed";
@@ -77,7 +78,13 @@ export interface StoredMessage {
   starred?: boolean;
   /** Set on `system` notices, which are generated on this device and never
    * sent anywhere. */
-  systemKind?: "security-code-changed" | "group-updated";
+  systemKind?: "security-code-changed" | "group-updated" | "timer-changed";
+  /** Set when the chat had a disappearing-messages timer at send time.
+   *
+   * An absolute instant chosen by the sender and carried in the envelope, so
+   * both sides delete at the same moment. Deriving it locally from a duration
+   * would let the device with the slower clock keep the message longest. */
+  expiresAtMs?: number;
 }
 
 /** Records a local-only notice in a chat. Used for things this device
@@ -326,6 +333,18 @@ export async function pendingOutbox(nowMs = Date.now()): Promise<StoredMessage[]
 export async function clearChat(chatId: string): Promise<void> {
   const messages = await messagesFor(chatId);
   await Promise.all(messages.map((m) => deleteMessage(m.id)));
+}
+
+/** Drops every message whose disappearing-messages timer has run out.
+ *
+ * Returns what it deleted so the caller can drop the matching cached blobs:
+ * a photo whose message is gone but whose bytes are still in the media cache
+ * has not disappeared in any sense the member would recognise.
+ */
+export async function deleteExpired(nowMs = Date.now()): Promise<StoredMessage[]> {
+  const gone = expiredAmong(await allMessages(), nowMs);
+  await Promise.all(gone.map((m) => deleteMessage(m.id)));
+  return gone;
 }
 
 /** Rebuilds the chat list.
