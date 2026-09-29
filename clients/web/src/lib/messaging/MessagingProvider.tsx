@@ -6,6 +6,8 @@ import { deviceId } from "../api/client";
 import { useSession } from "../auth/SessionProvider";
 import { useDirectory } from "../directory/DirectoryProvider";
 import { useExpirySweep } from "./useExpirySweep";
+import { useScheduledSender } from "./useScheduledSender";
+import { lateBy } from "./scheduled.mjs";
 import { announceMessage } from "../a11y/announce.mjs";
 import { notifyMessage, setBadge } from "../notifications";
 import { MessagingClient, type CallSignal, type PresenceEntry } from "./client";
@@ -41,6 +43,10 @@ interface MessagingContextValue {
   /** The latest thing worth saying out loud, for the layout's live region.
    * Null when there is nothing; see lib/a11y/announce.mjs for what qualifies. */
   announcement: string | null;
+  /** Set when a scheduled message went out later than it was meant to, because
+   * the app was closed at the time. */
+  scheduledNote: string | null;
+  dismissScheduledNote: () => void;
   /** Who is online, and when anyone else was last seen. Empty when this
    * member has presence turned off -- the server withholds it. */
   presence: Map<string, PresenceEntry>;
@@ -93,6 +99,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [chats, setChats] = useState<Map<string, ChatSummary>>(new Map());
   const [revision, setRevision] = useState(0);
   const [announcement, setAnnouncement] = useState<string | null>(null);
+  const [scheduledNote, setScheduledNote] = useState<string | null>(null);
   const [profileRevision, setProfileRevision] = useState(0);
   const [typing, setTyping] = useState<TypingState>(emptyTyping);
   const [statuses, setStatuses] = useState<StatusReel[]>([]);
@@ -255,6 +262,22 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   }, [refreshChats]);
   useExpirySweep(onSwept);
 
+  // Scheduled messages. The runner lives here rather than in the chat screen
+  // so a message queued for one chat still goes out while another is open.
+  const onScheduledSent = useCallback(
+    (chatId: string, sentAtMs: number, atMs: number) => {
+      refreshChats();
+      setRevision((n) => n + 1);
+      const late = lateBy({ atMs }, sentAtMs);
+      // Reported rather than hidden: the member picked a time, and if the app
+      // was closed then they should know it went out late.
+      setScheduledNote(late ? `A scheduled message went out ${late}.` : null);
+    },
+    [refreshChats]
+  );
+  useScheduledSender(clientRef.current, onScheduledSent);
+  const dismissScheduledNote = useCallback(() => setScheduledNote(null), []);
+
   const value = useMemo<MessagingContextValue>(
     () => ({
       client: clientRef.current,
@@ -271,6 +294,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       dismissIncomingCall,
       presence,
       announcement,
+      scheduledNote,
+      dismissScheduledNote,
     }),
     [
       online,
@@ -286,6 +311,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       dismissIncomingCall,
       presence,
       announcement,
+      scheduledNote,
+      dismissScheduledNote,
     ]
   );
 

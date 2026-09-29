@@ -24,6 +24,7 @@ const PATHS = {
   // Their own paths rather than a rotated `chevron`: a transform on an
   // inline SVG rotates about the viewBox, not the glyph, so the arrows
   // ended up off-centre in a 18px button.
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13v5l3.5 2",
   chevronUp: "m6 15 6-6 6 6",
   chevronDown: "m6 9 6 6 6-6",
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-5v-5m0-3h.01",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
 import { CameraSheet } from "@/components/chat/CameraSheet";
@@ -21,6 +21,9 @@ import { settingsFor, updateChatSettings } from "@/lib/messaging/chat-settings";
 import type { ReplyRef, StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
+import { ScheduleSheet } from "./ScheduleSheet";
+import { loadScheduled, schedule, unschedule } from "@/lib/messaging/scheduled-store";
+import { describeWhen, forChat } from "@/lib/messaging/scheduled.mjs";
 
 /** Matches MAX_BLOB_BYTES in the messaging service (app/media.py). */
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -47,7 +50,7 @@ export function Composer({
    * directory and a sheet of its own. */
   onShareContact?: () => void;
 }) {
-  const { client } = useMessaging();
+  const { client, revision } = useMessaging();
   const { session } = useSession();
   const chatId = targetChatId(target);
   const [draft, setDraft] = useState(() => settingsFor(chatId).draft ?? "");
@@ -57,6 +60,15 @@ export function Composer({
   // straight through would make crop and draw a separate, easily-missed path.
   const [editingPhoto, setEditingPhoto] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+  /** Bumped to force a re-read of the queue, which lives in localStorage and
+   * is also written by the runner in the provider. */
+  const [queued, setQueued] = useState(0);
+  const queuedHere = useMemo(
+    () => forChat(loadScheduled(), chatId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chatId, queued, revision]
+  );
   /** Fraction of the current attachment uploaded, or null when idle. */
   const [uploading, setUploading] = useState<number | null>(null);
 
@@ -437,6 +449,29 @@ export function Composer({
     <>
       {dragging && <div className={styles.dropTarget}>Drop to send</div>}
 
+      {queuedHere.length > 0 && (
+        <div className={styles.queuedBar}>
+          <Icon name="clock" size={14} />
+          <span>
+            {queuedHere.length} message{queuedHere.length === 1 ? "" : "s"} waiting to send
+            {queuedHere[0] ? `, next ${describeWhen(queuedHere[0].atMs, Date.now(), (ms) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), (ms) => new Date(ms).toLocaleDateString())}` : ""}
+          </span>
+          <button
+            type="button"
+            className={styles.recordCancel}
+            onClick={() => {
+              // Cancels the soonest, which is the one the bar names. Cancelling
+              // all of them at once is not offered: a queue you can empty by
+              // accident is worse than one you clear item by item.
+              unschedule(queuedHere[0].id);
+              setQueued((n) => n + 1);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       {uploading !== null && (
         <div
           className={styles.uploadBar}
@@ -690,6 +725,18 @@ export function Composer({
           </div>
         )}
 
+        {hasDraft && !editing && (
+          <button
+            className={styles.composerIcon}
+            type="button"
+            aria-label="Send later"
+            disabled={busy}
+            onClick={() => setScheduling(true)}
+          >
+            <Icon name="clock" size={20} />
+          </button>
+        )}
+
         <button
           className={styles.send}
           type="button"
@@ -704,6 +751,24 @@ export function Composer({
           <Icon name={hasDraft ? "send" : recording ? "check" : "mic"} size={20} />
         </button>
       </div>
+
+      {scheduling && (
+        <ScheduleSheet
+          onClose={() => setScheduling(false)}
+          onPick={(atMs) => {
+            schedule({
+              chatId,
+              isGroup: target.kind === "group",
+              body: draft.trim(),
+              atMs,
+            });
+            setDraft("");
+            updateChatSettings(chatId, { draft: "" });
+            setScheduling(false);
+            setQueued((n) => n + 1);
+          }}
+        />
+      )}
 
       <input
         ref={fileRef}
