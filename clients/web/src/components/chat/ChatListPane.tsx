@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Icon } from "@/components/Icon";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/messaging/chat-settings";
 
 import styles from "@/app/chats/chats.module.css";
+import { isSearchShortcut, isTypingTarget } from "@/lib/a11y/focus.mjs";
 
 function preview(message: StoredMessage | null): string {
   if (!message) return "No messages yet";
@@ -59,6 +60,22 @@ export function ChatListPane() {
   const [settings, setSettings] = useState<Record<string, ChatSettings>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Ctrl/Cmd+K focuses search from anywhere in the list. Deliberately not
+  // bound while the member is typing into something: stealing a keypress from
+  // the composer is worse than not having the shortcut at all.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isSearchShortcut(event)) return;
+      if (isTypingTarget(event.target) && event.target !== searchRef.current) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
   const [menuFor, setMenuFor] = useState<string | null>(null);
 
   useEffect(() => {
@@ -164,8 +181,16 @@ export function ChatListPane() {
         <div className={styles.search}>
           <Icon name="search" size={17} />
           <input
+            ref={searchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // Escape clears first and only then gives up focus, so one press
+              // is never ambiguous between "undo the filter" and "leave".
+              if (e.key !== "Escape") return;
+              if (query) setQuery("");
+              else e.currentTarget.blur();
+            }}
             placeholder="Search"
             aria-label="Search chats"
           />

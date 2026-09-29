@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 
 import styles from "./chat.module.css";
+import { useDialog } from "@/lib/a11y/useDialog";
 
 /** In-app capture. Deliberately separate from the file picker: on a phone the
  * picker's "camera" option hands back a full-resolution photo via the OS, which
@@ -16,6 +17,8 @@ export function CameraSheet({
   onCapture: (file: File) => void;
   onClose: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, onClose);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [facing, setFacing] = useState<"user" | "environment">("user");
@@ -78,7 +81,7 @@ export function CameraSheet({
   }
 
   return (
-    <div className={styles.cameraSheet} role="dialog" aria-label="Camera">
+    <div className={styles.cameraSheet} ref={dialogRef} role="dialog" aria-label="Camera">
       <div className={styles.cameraStage}>
         {error ? (
           <p className={styles.pickerNote}>{error}</p>

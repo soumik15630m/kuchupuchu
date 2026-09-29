@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { albumColumns } from "@/lib/messaging/albums.mjs";
 import type { StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
+import { useDialog } from "@/lib/a11y/useDialog";
 
 /** Several photos sent together, as one grid.
  *
@@ -109,16 +110,13 @@ export function AlbumViewer({
     };
   }, [message, urlFor]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, onClose);
 
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
       className={styles.albumViewer}
       role="dialog"
       aria-modal="true"

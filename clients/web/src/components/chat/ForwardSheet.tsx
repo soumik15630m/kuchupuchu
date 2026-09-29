@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/components/Icon";
 import { initialsFor, useDirectory } from "@/lib/directory/DirectoryProvider";
@@ -9,6 +9,7 @@ import type { ChatTarget } from "@/lib/messaging/client";
 import type { StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
+import { useDialog } from "@/lib/a11y/useDialog";
 
 /** Picks where to forward a message. Kept separate from the chat list so the
  * list's own concerns (archive, pin, unread) stay out of a modal that only
@@ -22,6 +23,8 @@ export function ForwardSheet({
   onPick: (target: ChatTarget, audience: string[]) => void;
   onClose: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, onClose);
   const { others, nameFor } = useDirectory();
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,7 +54,7 @@ export function ForwardSheet({
   return (
     <>
       <button type="button" className={styles.menuBackdrop} aria-label="Close" onClick={onClose} />
-      <div className={styles.forwardSheet} role="dialog" aria-label="Forward to">
+      <div className={styles.forwardSheet} ref={dialogRef} role="dialog" aria-label="Forward to">
         <div className={styles.forwardHeader}>
           <strong>Forward to</strong>
           <button type="button" className={styles.emojiClose} onClick={onClose} aria-label="Close">

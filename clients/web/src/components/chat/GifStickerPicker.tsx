@@ -13,6 +13,7 @@ import {
 } from "@/lib/messaging/stickers";
 
 import styles from "./chat.module.css";
+import { useDialog } from "@/lib/a11y/useDialog";
 
 function StickerTile({
   sticker,
@@ -57,6 +58,8 @@ export function GifStickerPicker({
   onPickSticker: (sticker: Sticker) => void;
   onClose: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, onClose);
   const [tab, setTab] = useState<"gif" | "sticker">(gifsConfigured() ? "gif" : "sticker");
   const [gifs, setGifs] = useState<Gif[]>([]);
   const [stickers, setStickers] = useState<Sticker[]>([]);
@@ -89,7 +92,7 @@ export function GifStickerPicker({
   }
 
   return (
-    <div className={styles.emojiPanel} role="dialog" aria-label="GIFs and stickers">
+    <div className={styles.emojiPanel} ref={dialogRef} role="dialog" aria-label="GIFs and stickers">
       <div className={styles.emojiTabs}>
         <button
           type="button"

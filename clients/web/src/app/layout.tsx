@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { SessionProvider } from "@/lib/auth/SessionProvider";
 import { AutoBackup } from "@/components/shell/AutoBackup";
 import { PushBridge } from "@/components/shell/PushBridge";
+import { LiveRegion } from "@/components/a11y/LiveRegion";
 import { ThemeSync } from "@/components/shell/ThemeSync";
 import { IncomingCall } from "@/components/call/IncomingCall";
 import { LockGate } from "@/components/shell/LockGate";
@@ -52,6 +53,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <MessagingProvider>
                 <AutoBackup />
                 <PushBridge />
+                <LiveRegion />
                 <ThemeSync />
                 <IncomingCall />
                 <LockGate>{children}</LockGate>

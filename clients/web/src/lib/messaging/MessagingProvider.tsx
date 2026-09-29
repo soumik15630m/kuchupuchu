@@ -6,6 +6,7 @@ import { deviceId } from "../api/client";
 import { useSession } from "../auth/SessionProvider";
 import { useDirectory } from "../directory/DirectoryProvider";
 import { useExpirySweep } from "./useExpirySweep";
+import { announceMessage } from "../a11y/announce.mjs";
 import { notifyMessage, setBadge } from "../notifications";
 import { MessagingClient, type CallSignal, type PresenceEntry } from "./client";
 import { recordMissedCall } from "../call/call-log";
@@ -37,6 +38,9 @@ interface MessagingContextValue {
    * cancelled or timed out. */
   incomingCall: CallSignal | null;
   dismissIncomingCall: () => void;
+  /** The latest thing worth saying out loud, for the layout's live region.
+   * Null when there is nothing; see lib/a11y/announce.mjs for what qualifies. */
+  announcement: string | null;
   /** Who is online, and when anyone else was last seen. Empty when this
    * member has presence turned off -- the server withholds it. */
   presence: Map<string, PresenceEntry>;
@@ -88,6 +92,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [chats, setChats] = useState<Map<string, ChatSummary>>(new Map());
   const [revision, setRevision] = useState(0);
+  const [announcement, setAnnouncement] = useState<string | null>(null);
   const [profileRevision, setProfileRevision] = useState(0);
   const [typing, setTyping] = useState<TypingState>(emptyTyping);
   const [statuses, setStatuses] = useState<StatusReel[]>([]);
@@ -150,9 +155,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       nameFor: (email) => nameForRef.current(email),
       onPinsChanged: () => setRevision((n) => n + 1),
       onMessage: (message) => {
-        notifyMessage(message, nameForRef.current(message.chatId), {
-          mentionsYou: mentionsMe(message, membersRef.current, myEmailRef.current),
-        });
+        const mentionsYou = mentionsMe(message, membersRef.current, myEmailRef.current);
+        notifyMessage(message, nameForRef.current(message.chatId), { mentionsYou });
+        // Spoken by the one live region in the layout. Separate from the OS
+        // notification above, which fires only when the tab is not visible --
+        // a screen-reader user looking at the chat gets nothing from that.
+        setAnnouncement(announceMessage(message, nameForRef.current, { mentionsYou }));
         bump();
       },
       onStatus: bump,
@@ -262,6 +270,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       incomingCall,
       dismissIncomingCall,
       presence,
+      announcement,
     }),
     [
       online,
@@ -276,6 +285,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       incomingCall,
       dismissIncomingCall,
       presence,
+      announcement,
     ]
   );
 

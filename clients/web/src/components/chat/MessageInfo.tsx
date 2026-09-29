@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useRef } from "react";
 
 import { Icon } from "@/components/Icon";
 import type { StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
+import { useDialog } from "@/lib/a11y/useDialog";
 
 /** Who received a message and who read it.
  *
@@ -24,13 +25,8 @@ export function MessageInfo({
   nameFor: (email: string) => string;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef, onClose);
 
   const recipients = message.recipients ?? [];
   const read = new Set(message.readBy ?? []);
@@ -44,6 +40,7 @@ export function MessageInfo({
   return (
     <div className={styles.menuBackdrop} onClick={onClose}>
       <div
+        ref={dialogRef}
         className={styles.forwardSheet}
         role="dialog"
         aria-modal="true"
