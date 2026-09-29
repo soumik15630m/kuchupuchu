@@ -1,0 +1,4 @@
+
+# Copied from @mediapipe/tasks-vision by scripts/vendor-vision-assets.mjs.
+# The model beside it IS committed — it has no npm source.
+/public/vision/wasm/

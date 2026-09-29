@@ -23,6 +23,7 @@ import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
 import { platformAuthenticatorAvailable, registerUnlockCredential } from "@/lib/lock/webauthn";
 import { useSession } from "@/lib/auth/SessionProvider";
+import { CALL_AUDIO_ROWS, loadCallAudio, saveCallAudio } from "@/lib/call/audio-settings";
 
 const MIN_PIN = 4;
 
@@ -33,6 +34,7 @@ export default function PrivacyPage() {
   const [platformAvailable, setPlatformAvailable] = useState(false);
   const [hasCredential, setHasCredential] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [callAudio, setCallAudio] = useState(() => loadCallAudio());
   const [autoLockMs, setAutoLockMsState] = useState<number>(60_000);
   const [pin, setPin] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -85,6 +87,49 @@ export default function PrivacyPage() {
         <PaneScroll>
           {error && <p style={{ color: "var(--danger)", padding: "10px 16px" }}>{error}</p>}
           {saved && <p style={{ color: "var(--ok)", padding: "10px 16px" }}>{saved}</p>}
+
+          <div className={themeStyles.section}>
+            <h2 className={themeStyles.sectionTitle}>Microphone in calls</h2>
+            {CALL_AUDIO_ROWS.map((row) => (
+              <div key={row.key} style={{ marginBottom: 14 }}>
+                <div
+                  className={themeStyles.options}
+                  role="radiogroup"
+                  aria-label={row.label}
+                >
+                  {[
+                    { on: true, label: "On" },
+                    { on: false, label: "Off" },
+                  ].map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      role="radio"
+                      aria-checked={callAudio[row.key] === option.on}
+                      className={themeStyles.radio}
+                      onClick={() => {
+                        setCallAudio(saveCallAudio({ [row.key]: option.on }));
+                        setSaved("Saved. Applies to your next call.");
+                      }}
+                    >
+                      <span className={themeStyles.radioMark} />
+                      <span className={themeStyles.radioLabel}>
+                        {row.label} — {option.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <p className={themeStyles.hint}>{row.note}</p>
+              </div>
+            ))}
+            <p className={themeStyles.hint}>
+              All three are your browser&apos;s own processing. Nothing is downloaded and no audio
+              leaves this device to be cleaned up — a model-based denoiser would mean fetching one
+              from someone else&apos;s server the moment a call starts.
+            </p>
+          </div>
+
+          <div className={settingsStyles.divider} />
 
           <div className={themeStyles.section}>
             <h2 className={themeStyles.sectionTitle}>App lock</h2>

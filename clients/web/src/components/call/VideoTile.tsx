@@ -13,12 +13,22 @@ export function VideoTile({
   participant,
   mirrored,
   onVideoEl,
+  handRaised,
+  pinned,
+  isMain,
+  onTogglePin,
 }: {
   participant: ParticipantView;
   mirrored?: boolean;
   /** Handed up so the call screen can put this element into picture-in-picture;
    * only one element can hold PiP, so the page owns the choice. */
   onVideoEl?: (el: HTMLVideoElement | null) => void;
+  handRaised?: boolean;
+  pinned?: boolean;
+  /** Whether this tile currently fills the main slot — pinned, or the active
+   * speaker when nothing is pinned. */
+  isMain?: boolean;
+  onTogglePin?: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const track = participant.videoTrack;
@@ -35,7 +45,28 @@ export function VideoTile({
   }, [track, onVideoEl]);
 
   return (
-    <div className={styles.tile} data-speaking={participant.speaking ? "true" : undefined}>
+    <div
+      className={styles.tile}
+      data-speaking={participant.speaking ? "true" : undefined}
+      data-main={isMain ? "true" : undefined}
+      data-pinned={pinned ? "true" : undefined}
+    >
+      {handRaised && (
+        <span className={styles.tileHand} aria-label="Hand raised">
+          <Icon name="hand" size={15} />
+        </span>
+      )}
+      {onTogglePin && (
+        <button
+          type="button"
+          className={styles.tilePin}
+          aria-label={pinned ? "Unpin this person" : "Pin this person to the main view"}
+          aria-pressed={pinned}
+          onClick={onTogglePin}
+        >
+          <Icon name="pin" size={14} />
+        </button>
+      )}
       {track ? (
         <video
           ref={ref}

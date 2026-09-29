@@ -18,6 +18,15 @@ import { GroupE2EE, DATA_TOPIC } from "../crypto/group-e2ee";
 import { loadIdentity, saveIdentity } from "../crypto/identity-store";
 import { GroupKeyProvider, createE2eeWorker } from "../crypto/key-provider";
 import type { DeviceIdentity } from "../crypto/signal-crypto";
+import {
+  IN_CALL_TOPIC,
+  MAX_CHAT_LENGTH,
+  appendChat,
+  applyHand,
+  decodeFrame,
+  encodeFrame,
+} from "./in-call.mjs";
+import { loadCallAudio } from "./audio-settings";
 
 export type CallStage = "idle" | "connecting" | "connected" | "reconnecting" | "ended" | "failed";
 
@@ -59,6 +68,16 @@ export interface CallState {
    * indication why. */
   audioBlocked: boolean;
   startedAtMs: number | null;
+  /** Background blur on the local camera. Off until asked for: the segmenter
+   * costs a model load and a per-frame pass on every frame published. */
+  blurred: boolean;
+  /** Raised hands, identity -> when. Lives for the call only. */
+  hands: Record<string, number>;
+  /** In-call chat, in memory only. Nothing is written to the message store:
+   * someone typing during a call has not chosen to put it in the history. */
+  chat: { from: string; body: string; atMs: number; mine: boolean }[];
+  /** Whose tile is pinned to the main slot, or null for automatic. */
+  pinned: string | null;
 }
 
 const QUALITY_REPORT_INTERVAL_MS = 5000;
@@ -204,6 +223,10 @@ export class CallEngine {
     audioBlocked: false,
     encrypted: false,
     startedAtMs: null,
+    blurred: false,
+    hands: {},
+    chat: [],
+    pinned: null,
   };
 
   constructor(
@@ -317,7 +340,16 @@ export class CallEngine {
       // testing/webrtc-harness/app.js has it in the wrong place.
       dynacast: true,
       adaptiveStream: true,
-      audioCaptureDefaults: audioDeviceId ? { deviceId: audioDeviceId } : undefined,
+      audioCaptureDefaults: {
+        ...(audioDeviceId ? { deviceId: audioDeviceId } : {}),
+        // The browser's own processing, not a model download: Chrome, Safari
+        // and Firefox all ship these, and they are what "noise suppression"
+        // means for a voice call. A third-party denoiser would mean fetching a
+        // model at call time, which tells someone else a call is starting.
+        noiseSuppression: loadCallAudio().noiseSuppression,
+        echoCancellation: loadCallAudio().echoCancellation,
+        autoGainControl: loadCallAudio().autoGainControl,
+      },
       // The key provider must exist before connect(), but starts empty — no key
       // is applied until startE2ee() runs, after connect(), once this client's
       // own identity is known. Until then media does not decrypt, which is the
@@ -507,8 +539,30 @@ export class CallEngine {
     room.on(RoomEvent.ActiveSpeakersChanged, () => this.syncParticipants());
 
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (topic !== DATA_TOPIC || !participant) return;
-      this.e2ee?.handleDataMessage(payload, participant.identity).catch(() => {});
+      if (!participant) return;
+      if (topic === DATA_TOPIC) {
+        this.e2ee?.handleDataMessage(payload, participant.identity).catch(() => {});
+        return;
+      }
+      // Its own topic, so a malformed chat frame can never reach the crypto
+      // handler above.
+      if (topic !== IN_CALL_TOPIC) return;
+      const frame = decodeFrame(payload);
+      if (!frame) return;
+      if (frame.t === "hand") {
+        this.patch({
+          hands: applyHand(this.state.hands, participant.identity, frame.up, Date.now()),
+        });
+        return;
+      }
+      this.patch({
+        chat: appendChat(this.state.chat, {
+          from: participant.identity,
+          body: frame.body,
+          atMs: Date.now(),
+          mine: false,
+        }),
+      });
     });
 
     room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
@@ -582,6 +636,94 @@ export class CallEngine {
   private stopQualityReporting() {
     if (this.qualityTimer) clearInterval(this.qualityTimer);
     this.qualityTimer = null;
+  }
+
+  /** Blurs the background of the local camera.
+   *
+   * The segmenter's model and wasm are served from this app (`/vision/`), not
+   * from a CDN. The library defaults to jsDelivr and storage.googleapis.com,
+   * which would mean two third parties learning that a call just started —
+   * the one thing a private call should not announce.
+   */
+  async setBackgroundBlur(on: boolean): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.videoTrack;
+    if (!track) {
+      // Remembered anyway, so turning the camera on later applies it.
+      this.patch({ blurred: on });
+      return;
+    }
+
+    try {
+      if (!on) {
+        await track.stopProcessor();
+        this.patch({ blurred: false });
+        return;
+      }
+      // BackgroundProcessor, not the deprecated BackgroundBlur(): only this
+      // form takes assetPaths, and assetPaths is the whole point here.
+      const { BackgroundProcessor } = await import("@livekit/track-processors");
+      await track.setProcessor(
+        BackgroundProcessor({
+          mode: "background-blur",
+          blurRadius: 10,
+          assetPaths: {
+            tasksVisionFileSet: "/vision/wasm",
+            modelAssetPath: "/vision/selfie_segmenter.tflite",
+          },
+        })
+      );
+      this.patch({ blurred: true });
+    } catch {
+      // A device too slow for the segmenter, or a model that would not load.
+      // The call carries on unblurred rather than dropping the video.
+      this.patch({ blurred: false });
+    }
+  }
+
+  async raiseHand(up: boolean): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    this.patch({
+      hands: applyHand(this.state.hands, room.localParticipant.identity, up, Date.now()),
+    });
+    try {
+      await room.localParticipant.publishData(encodeFrame({ t: "hand", up }), {
+        reliable: true,
+        topic: IN_CALL_TOPIC,
+      });
+    } catch {
+      // Best effort. The local hand still shows; the others simply do not see
+      // it, which beats the button appearing to do nothing.
+    }
+  }
+
+  async sendCallChat(body: string): Promise<void> {
+    const room = this.room;
+    const text = body.trim().slice(0, MAX_CHAT_LENGTH);
+    if (!room || !text) return;
+    this.patch({
+      chat: appendChat(this.state.chat, {
+        from: room.localParticipant.identity,
+        body: text,
+        atMs: Date.now(),
+        mine: true,
+      }),
+    });
+    try {
+      await room.localParticipant.publishData(encodeFrame({ t: "chat", body: text }), {
+        reliable: true,
+        topic: IN_CALL_TOPIC,
+      });
+    } catch {
+      // Shown locally either way, and not retried: "can you hear me" is
+      // worthless a minute later.
+    }
+  }
+
+  setPinned(identity: string | null): void {
+    this.patch({ pinned: identity });
   }
 
   async toggleMic(): Promise<void> {

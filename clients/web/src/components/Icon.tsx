@@ -25,6 +25,8 @@ const PATHS = {
   // inline SVG rotates about the viewBox, not the glyph, so the arrows
   // ended up off-centre in a 18px button.
   clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13v5l3.5 2",
+  blur: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 3.5v11M8.5 8.5v7M15.5 8.5v7",
+  hand: "M7 11V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5v-5a1.5 1.5 0 0 1 3 0V11m0-1v-4a1.5 1.5 0 0 1 3 0v6m0-3a1.5 1.5 0 0 1 3 0v4a7 7 0 0 1-7 7h-1a7 7 0 0 1-7-7v-2a1.5 1.5 0 0 1 3 0",
   chevronUp: "m6 15 6-6 6 6",
   chevronDown: "m6 9 6 6 6-6",
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-5v-5m0-3h.01",

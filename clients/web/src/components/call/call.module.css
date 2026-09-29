@@ -177,6 +177,9 @@
 }
 
 .control {
+  /* The unread badge on the in-call chat button is positioned against this;
+     without it the badge escapes to the nearest positioned ancestor. */
+  position: relative;
   display: grid;
   place-items: center;
   width: 52px;
@@ -432,4 +435,132 @@
 .deviceOption[data-active="true"] {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Raised hand on a tile. */
+.tileHand {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+}
+
+.tilePin {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  cursor: pointer;
+  /* Hidden until the tile is hovered or the pin is on, so an unpinned call
+     does not carry a row of controls nobody asked for. */
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.tile:hover .tilePin,
+.tile:focus-within .tilePin,
+.tile[data-pinned="true"] .tilePin {
+  opacity: 1;
+}
+
+.tile[data-pinned="true"] .tilePin {
+  background: var(--accent);
+}
+
+/* Who has a hand up, in the order they raised them. */
+.handsBar {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(90%, 420px);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 13px;
+}
+
+.controlBadge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  line-height: 17px;
+  text-align: center;
+}
+
+/* In-call chat. Lives for the call — see lib/call/in-call.mjs. */
+.callChatList {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.callChatRow {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 14px;
+}
+
+.callChatWho {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.callChatBody {
+  word-break: break-word;
+}
+
+.callChatEmpty {
+  padding: 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.callChatForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.callChatInput {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
 }

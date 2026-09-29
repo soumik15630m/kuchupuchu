@@ -17,6 +17,14 @@ import { finishCall, recordCallStarted } from "@/lib/call/call-log";
 import { useMessaging } from "@/lib/messaging/MessagingProvider";
 import { targetFor } from "@/lib/messaging/useChatTarget";
 import { pickPipParticipant, pipSupported } from "@/lib/call/pip.mjs";
+import {
+  handOrder,
+  mainSpeaker,
+  prunePin,
+  pruneHands,
+  togglePin,
+  MAX_CHAT_LENGTH,
+} from "@/lib/call/in-call.mjs";
 
 function qualityName(q: ConnectionQuality): string {
   if (q === ConnectionQuality.Excellent) return "excellent";
@@ -52,6 +60,9 @@ export default function CallPage() {
   const [state, setState] = useState<CallState | null>(null);
   const [showSecurity, setShowSecurity] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [seenChat, setSeenChat] = useState(0);
+  const [chatDraft, setChatDraft] = useState("");
   const [devices, setDevices] = useState<{
     audioinput: MediaDeviceInfo[];
     videoinput: MediaDeviceInfo[];
@@ -193,6 +204,16 @@ export default function CallPage() {
   const local = participants.find((p) => p.isLocal);
   const ordered = local ? [...remote, local] : remote;
 
+  // Hands belonging to people who left, or left up past the timeout, are not
+  // shown — a hand with nobody behind it is noise.
+  const hands = pruneHands(state?.hands ?? {}, participants.map((p) => p.identity), Date.now());
+  const handUp = local ? Object.prototype.hasOwnProperty.call(hands, local.identity) : false;
+  const raised = handOrder(hands);
+  const chat = state?.chat ?? [];
+  const unreadChat = showChat ? 0 : Math.max(0, chat.length - seenChat);
+  const pinned = prunePin(state?.pinned ?? null, participants.map((p) => p.identity));
+  const main = mainSpeaker(ordered, pinned, ordered.find((p) => p.speaking)?.identity ?? null);
+
   return (
     <div className={styles.screen}>
       <div ref={audioRef} />
@@ -262,6 +283,10 @@ export default function CallPage() {
               participant={p}
               mirrored={p.isLocal && !p.sharingScreen}
               onVideoEl={registerPipTarget(p.identity)}
+              handRaised={Object.prototype.hasOwnProperty.call(hands, p.identity)}
+              pinned={pinned === p.identity}
+              isMain={main?.identity === p.identity}
+              onTogglePin={() => engineRef.current?.setPinned(togglePin(pinned, p.identity))}
             />
           ))}
         </div>
@@ -334,6 +359,42 @@ export default function CallPage() {
           <button
             className={styles.control}
             type="button"
+            data-active={state?.blurred}
+            aria-label={state?.blurred ? "Turn background blur off" : "Blur your background"}
+            onClick={() => void engineRef.current?.setBackgroundBlur(!state?.blurred)}
+          >
+            <Icon name="blur" size={20} />
+          </button>
+
+          <button
+            className={styles.control}
+            type="button"
+            data-active={handUp}
+            aria-label={handUp ? "Lower your hand" : "Raise your hand"}
+            onClick={() => void engineRef.current?.raiseHand(!handUp)}
+          >
+            <Icon name="hand" size={20} />
+          </button>
+
+          <button
+            className={styles.control}
+            type="button"
+            data-active={showChat}
+            aria-label={
+              unreadChat > 0 ? `Messages in this call, ${unreadChat} new` : "Messages in this call"
+            }
+            onClick={() => {
+              setShowChat((v) => !v);
+              setSeenChat(state?.chat.length ?? 0);
+            }}
+          >
+            <Icon name="chats" size={20} />
+            {unreadChat > 0 && <span className={styles.controlBadge}>{unreadChat}</span>}
+          </button>
+
+          <button
+            className={styles.control}
+            type="button"
             data-active={showDevices}
             aria-label="Audio and video devices"
             onClick={async () => {
@@ -366,6 +427,59 @@ export default function CallPage() {
           >
             <Icon name="hangup" size={24} />
           </button>
+        </div>
+      )}
+
+      {raised.length > 0 && (
+        <div className={styles.handsBar} role="status">
+          <Icon name="hand" size={14} />
+          <span>
+            {raised
+              .map((identity) => (identity === local?.identity ? "You" : nameFor(identity)))
+              .join(", ")}
+          </span>
+        </div>
+      )}
+
+      {showChat && (
+        <div className={styles.sheet} role="dialog" aria-label="Messages in this call">
+          <h2 className={styles.sheetTitle}>Messages in this call</h2>
+          <ul className={styles.callChatList}>
+            {chat.length === 0 && (
+              <li className={styles.callChatEmpty}>
+                Nothing yet. These stay in the call — nothing typed here is saved to the chat.
+              </li>
+            )}
+            {chat.map((entry) => (
+              <li key={`${entry.atMs}-${entry.from}`} className={styles.callChatRow}>
+                <span className={styles.callChatWho}>
+                  {entry.mine ? "You" : nameFor(entry.from)}
+                </span>
+                <span className={styles.callChatBody}>{entry.body}</span>
+              </li>
+            ))}
+          </ul>
+          <form
+            className={styles.callChatForm}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void engineRef.current?.sendCallChat(chatDraft);
+              setChatDraft("");
+              setSeenChat(chat.length + 1);
+            }}
+          >
+            <input
+              className={styles.callChatInput}
+              value={chatDraft}
+              maxLength={MAX_CHAT_LENGTH}
+              placeholder="Message everyone in this call"
+              aria-label="Message everyone in this call"
+              onChange={(e) => setChatDraft(e.target.value)}
+            />
+            <button type="submit" className={styles.control} aria-label="Send" disabled={!chatDraft.trim()}>
+              <Icon name="send" size={18} />
+            </button>
+          </form>
         </div>
       )}
 
