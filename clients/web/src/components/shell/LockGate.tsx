@@ -7,10 +7,13 @@ import {
   markUnlocked,
   shouldLock,
   touchActivity,
+  noteCredentialUnlock,
+  unlockCredentialId,
   verifyPin,
 } from "@/lib/lock/app-lock";
 
 import styles from "@/app/login/login.module.css";
+import { verifyWithCredential } from "@/lib/lock/webauthn";
 
 /** Presents the lock screen over everything when the app is locked.
  *
@@ -22,10 +25,12 @@ export function LockGate({ children }: { children: React.ReactNode }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [credentialId, setCredentialId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocked(shouldLock());
+    setCredentialId(unlockCredentialId());
     setChecked(true);
   }, []);
 
@@ -87,6 +92,23 @@ export function LockGate({ children }: { children: React.ReactNode }) {
     [pin]
   );
 
+  const unlockWithDevice = useCallback(async () => {
+    if (!credentialId) return;
+    setBusy(true);
+    setError(null);
+    const ok = await verifyWithCredential(credentialId);
+    setBusy(false);
+    if (!ok) {
+      // Cancelling is the common case here, not an attack; the wording says
+      // what to do rather than accusing anyone of anything.
+      setError("Didn't unlock. Use your PIN instead, or try again.");
+      return;
+    }
+    noteCredentialUnlock();
+    markUnlocked();
+    setLocked(false);
+  }, [credentialId]);
+
   // Rendering children before the check would flash the chat list.
   if (!checked) return null;
   if (!locked) return <>{children}</>;
@@ -119,6 +141,17 @@ export function LockGate({ children }: { children: React.ReactNode }) {
             {busy ? "Checking…" : "Unlock"}
           </button>
         </form>
+
+        {credentialId && (
+          <button
+            className={styles.link}
+            type="button"
+            disabled={busy}
+            onClick={() => void unlockWithDevice()}
+          >
+            Use this device instead
+          </button>
+        )}
 
         {error && (
           <p className={styles.error} role="alert">

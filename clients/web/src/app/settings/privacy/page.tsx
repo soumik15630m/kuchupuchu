@@ -6,6 +6,8 @@ import { AppShell } from "@/components/shell/AppShell";
 import { Pane, PaneHeader, PaneScroll } from "@/components/ui/Pane";
 import {
   AUTO_LOCK_OPTIONS,
+  setUnlockCredential,
+  unlockCredentialId,
   disableLock,
   enableLock,
   isLockEnabled,
@@ -19,12 +21,18 @@ import { useMessaging } from "@/lib/messaging/MessagingProvider";
 
 import settingsStyles from "../settings.module.css";
 import themeStyles from "../theme/theme.module.css";
+import { platformAuthenticatorAvailable, registerUnlockCredential } from "@/lib/lock/webauthn";
+import { useSession } from "@/lib/auth/SessionProvider";
 
 const MIN_PIN = 4;
 
 export default function PrivacyPage() {
   const { client } = useMessaging();
+  const { email: myEmail } = useSession();
   const [enabled, setEnabled] = useState(false);
+  const [platformAvailable, setPlatformAvailable] = useState(false);
+  const [hasCredential, setHasCredential] = useState(false);
+  const [registering, setRegistering] = useState(false);
   const [autoLockMs, setAutoLockMsState] = useState<number>(60_000);
   const [pin, setPin] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -35,6 +43,8 @@ export default function PrivacyPage() {
   const [sharing, setSharing] = useState(defaultSharing);
 
   useEffect(() => {
+    void platformAuthenticatorAvailable().then(setPlatformAvailable);
+    setHasCredential(unlockCredentialId() !== null);
     setEnabled(isLockEnabled());
     const config = loadLock();
     if (config) setAutoLockMsState(config.autoLockMs);
@@ -106,6 +116,50 @@ export default function PrivacyPage() {
                     </button>
                   ))}
                 </div>
+
+                {platformAvailable && (
+                  <>
+                    <h2 className={themeStyles.sectionTitle} style={{ marginTop: 16 }}>
+                      Unlock with this device
+                    </h2>
+                    <button
+                      className={themeStyles.reset}
+                      type="button"
+                      disabled={registering}
+                      onClick={async () => {
+                        setError(null);
+                        if (hasCredential) {
+                          setUnlockCredential(null);
+                          setHasCredential(false);
+                          setSaved("Removed. Your PIN still works.");
+                          return;
+                        }
+                        setRegistering(true);
+                        const id = await registerUnlockCredential(myEmail ?? "");
+                        setRegistering(false);
+                        if (!id) {
+                          setError("Didn't set that up. Your PIN still works.");
+                          return;
+                        }
+                        setUnlockCredential(id);
+                        setHasCredential(true);
+                        setSaved("Saved.");
+                      }}
+                    >
+                      {registering
+                        ? "Waiting for your device…"
+                        : hasCredential
+                          ? "Stop using this device to unlock"
+                          : "Use fingerprint or face instead of the PIN"}
+                    </button>
+                    <p className={themeStyles.hint}>
+                      A faster way past the same lock — not a stronger one. Your PIN keeps working,
+                      and neither protects what is stored on this machine: someone with access to
+                      this browser profile can read the history either way. It stops a person who
+                      picks up an unlocked device, which is what a screen lock is for.
+                    </p>
+                  </>
+                )}
 
                 <button
                   className={themeStyles.reset}

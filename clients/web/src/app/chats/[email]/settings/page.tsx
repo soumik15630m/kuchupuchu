@@ -19,6 +19,7 @@ import {
 import { useSession } from "@/lib/auth/SessionProvider";
 import { clearChat } from "@/lib/messaging/store";
 import { download, exportChat } from "@/lib/export/service";
+import { SafetyNumberQr } from "@/components/chat/SafetyNumberQr";
 import { EPHEMERAL_DURATIONS } from "@/lib/messaging/ephemeral.mjs";
 import { settingsFor } from "@/lib/messaging/chat-settings";
 import { acknowledgePin, pinsFor, type IdentityPin } from "@/lib/crypto/identity-pins";
@@ -48,6 +49,7 @@ export default function ChatSettingsPage() {
   const [timerNote, setTimerNote] = useState<"unsynced" | null>(null);
   const [exporting, setExporting] = useState<"text" | "media" | null>(null);
   const [exportNote, setExportNote] = useState<string | null>(null);
+  const [showingQr, setShowingQr] = useState<IdentityPin | null>(null);
 
   const runExport = useCallback(
     async (includeMedia: boolean) => {
@@ -378,6 +380,13 @@ export default function ChatSettingsPage() {
                           : `First seen ${new Date(pin.firstSeenAtMs).toLocaleDateString()}`}
                       </span>
                     </span>
+                    <button
+                      type="button"
+                      className={themeStyles.reset}
+                      onClick={() => setShowingQr(pin)}
+                    >
+                      Scan
+                    </button>
                     {!pin.acknowledgedAtMs && (
                       <button
                         type="button"
@@ -394,8 +403,9 @@ export default function ChatSettingsPage() {
                   </div>
                 ))}
                 <p className={themeStyles.hint}>
-                  Read this aloud over a channel this app doesn&apos;t control — a phone call, or in
-                  person. If it ever changes, a warning appears in the chat.
+                  Compare this over a channel this app doesn&apos;t control — hold the two screens
+                  together with Scan, or read it aloud on a phone call. If it ever changes, a
+                  warning appears in the chat.
                 </p>
               </div>
             </>
@@ -501,6 +511,13 @@ export default function ChatSettingsPage() {
                 : "Only removes messages from this device. The other person keeps their copy."}
             </p>
           </div>
+          {showingQr && (
+            <SafetyNumberQr
+              safetyNumber={showingQr.safetyNumber}
+              peerName={name}
+              onClose={() => setShowingQr(null)}
+            />
+          )}
         </PaneScroll>
       </Pane>
     </AppShell>

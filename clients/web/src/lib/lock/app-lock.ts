@@ -22,6 +22,10 @@ export interface LockConfig {
   autoLockMs: number;
   failedAttempts: number;
   lockedOutUntilMs?: number;
+  /** A platform authenticator registered as an alternative way through the
+   * same gate. Additive: the PIN is never removed, because an unlock method
+   * with no fallback is a way to lose a conversation. See webauthn.ts. */
+  credentialIdB64?: string;
 }
 
 export const AUTO_LOCK_OPTIONS = [
@@ -164,4 +168,27 @@ export function shouldLock(nowMs = Date.now()): boolean {
 
 export function touchActivity(): void {
   if (sessionStorage.getItem(UNLOCKED_AT)) markUnlocked();
+}
+
+export function setUnlockCredential(credentialIdB64: string | null): void {
+  const config = loadLock();
+  if (!config) return;
+  const next = { ...config };
+  if (credentialIdB64) next.credentialIdB64 = credentialIdB64;
+  else delete next.credentialIdB64;
+  save(next);
+}
+
+export function unlockCredentialId(): string | null {
+  return loadLock()?.credentialIdB64 ?? null;
+}
+
+/** Records a successful authenticator unlock.
+ *
+ * Deliberately resets the PIN backoff too: the member proved who they are,
+ * and leaving them locked out of the PIN afterwards would punish the person
+ * who just passed the stronger check. */
+export function noteCredentialUnlock(): void {
+  const config = loadLock();
+  if (config) save({ ...config, failedAttempts: 0, lockedOutUntilMs: undefined });
 }

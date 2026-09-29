@@ -1785,3 +1785,24 @@
   max-height: 100%;
   object-fit: contain;
 }
+
+/* Safety-number QR. Sized in modules, not pixels, so it stays crisp at any
+   scale and never lands on a half-module boundary. */
+.qr {
+  display: block;
+  width: min(240px, 60vw);
+  height: auto;
+  margin: 4px auto 12px;
+  border-radius: 6px;
+}
+
+.qrDigits {
+  margin: 0;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--text);
+  word-break: break-all;
+}
