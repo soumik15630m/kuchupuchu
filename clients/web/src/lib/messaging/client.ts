@@ -1,6 +1,6 @@
 import type { Session, WireMessage } from "../api/client";
 import { getGroup, isGroupId, loadGroups, toRef, upsertFromRef, type Group, type GroupRef } from "../groups";
-import { decryptBlob } from "./media";
+import { decryptBlob, encryptBlob } from "./media";
 import { deleteCachedMedia, getCachedMedia, putCachedMedia } from "./media-cache";
 import { SessionManager, decodeContent, encodeContent, type MessageEnvelope } from "./sessions";
 import {
@@ -21,6 +21,14 @@ import { loadSharing, shouldSendReadReceipt, shouldSendTyping } from "./privacy.
 import { settingsFor, updateChatSettings } from "./chat-settings";
 import { expiryFor, isKnownDuration, timerNotice } from "./ephemeral.mjs";
 import { applyPinChange } from "./pins.mjs";
+import {
+  acceptBackfill,
+  noteAsked,
+  pruneAsked,
+  selectToRequest,
+  shouldAnswer,
+} from "./backfill.mjs";
+import { loadAskedBackfills, saveAskedBackfills } from "./backfill-store";
 import { markViewed, putStatus, recordViewer, type StatusPost } from "./status-store";
 import { deleteAvatar, putAvatar } from "../directory/avatar-store";
 
@@ -75,6 +83,8 @@ interface Content {
     | "view-once-opened"
     | "ephemeral-timer"
     | "pin"
+    | "media-request"
+    | "media-backfill"
     | "theme"
     | "call-invite"
     | "call-cancel"
@@ -404,6 +414,8 @@ export class MessagingClient {
       content.kind === "view-once-opened" ||
       content.kind === "ephemeral-timer" ||
       content.kind === "pin" ||
+      content.kind === "media-request" ||
+      content.kind === "media-backfill" ||
       content.kind === "theme" ||
       content.kind === "call-invite" ||
       content.kind === "call-cancel" ||
@@ -568,6 +580,64 @@ export class MessagingClient {
       const next = applyPinChange(current, content.target, content.pin !== false);
       updateChatSettings(chatId, { pinnedIds: next });
       this.events.onPinsChanged(chatId, next);
+      return;
+    }
+
+    if (content.kind === "media-request") {
+      // Own devices only, and only if this one actually holds the bytes.
+      const hasBlob = content.target ? (await getCachedMedia(content.target)) !== null : false;
+      if (!shouldAnswer(content, this.api.email, fromEmail, hasBlob)) return;
+
+      const blob = await getCachedMedia(content.target!);
+      if (!blob) return;
+      try {
+        // Re-encrypted under a fresh key and re-uploaded rather than sent
+        // inline: a photo is megabytes and the server rejects an envelope that
+        // size. This reuses the ordinary blob path, so the server still holds
+        // only ciphertext.
+        const sealed = await encryptBlob(blob);
+        const { id } = await this.api.uploadMedia(sealed.data, [this.api.email]);
+        await this.send(
+          { kind: "direct", email: this.api.email },
+          {
+            kind: "media-backfill",
+            body: "",
+            target: content.target,
+            media: {
+              mediaId: id,
+              key: sealed.key,
+              iv: sealed.iv,
+              mime: blob.type || "application/octet-stream",
+              byteSize: blob.size,
+            },
+          }
+        );
+      } catch {
+        // A failed re-upload is not worth surfacing on the device that has the
+        // photo; the asking device simply tries again after the retry window.
+      }
+      return;
+    }
+
+    if (content.kind === "media-backfill") {
+      const asked = loadAskedBackfills();
+      if (!acceptBackfill(content, this.api.email, fromEmail, asked)) return;
+
+      // Every message pointing at the old blob, not just one: the same photo
+      // can be forwarded, and each copy carries its own reference.
+      const all = await allMessages();
+      for (const message of all) {
+        const existing = message.media;
+        if (!existing || existing.mediaId !== content.target) continue;
+        const updated: StoredMessage = {
+          ...message,
+          // The thumbnail is kept from the original: it arrived inline in the
+          // envelope and is what renders before the full blob is fetched.
+          media: { ...existing, ...content.media!, thumb: existing.thumb },
+        };
+        await putMessage(updated);
+        this.events.onStatus(updated);
+      }
       return;
     }
 
@@ -818,7 +888,9 @@ export class MessagingClient {
       content.kind === "edit" ||
       content.kind === "view-once-opened" ||
       content.kind === "ephemeral-timer" ||
-      content.kind === "pin";
+      content.kind === "pin" ||
+      content.kind === "media-request" ||
+      content.kind === "media-backfill";
     const chatId = targetChatId(target);
 
     // Control messages are not the conversation and must not disappear with
@@ -1028,6 +1100,37 @@ export class MessagingClient {
     } catch {
       return false;
     }
+  }
+
+  /** Asks this account's other devices for attachments this one is missing.
+   *
+   * Called when a media fetch fails: the blob is past the server's retention
+   * window but a sibling device may still have it cached. Silent when there is
+   * nothing to ask for or nobody to ask.
+   */
+  async requestMissingMedia(messages: StoredMessage[]): Promise<number> {
+    const now = Date.now();
+    let asked = pruneAsked(loadAskedBackfills(), now);
+    const wanted = selectToRequest(messages, asked, now);
+    if (wanted.length === 0) return 0;
+
+    let sent = 0;
+    for (const message of wanted) {
+      const mediaId = message.media!.mediaId;
+      try {
+        await this.send(
+          { kind: "direct", email: this.api.email },
+          { kind: "media-request", body: "", target: mediaId }
+        );
+        asked = noteAsked(asked, mediaId, now);
+        sent += 1;
+      } catch {
+        // No other device online. Not recorded as asked, so the next attempt
+        // is not blocked by a request that never went anywhere.
+      }
+    }
+    saveAskedBackfills(asked);
+    return sent;
   }
 
   async syncTheme(theme: Record<string, unknown>): Promise<void> {

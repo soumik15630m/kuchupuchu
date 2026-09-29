@@ -236,6 +236,8 @@ function MediaAttachment({ message }: { message: StoredMessage }) {
   const { client } = useMessaging();
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [gone, setGone] = useState(false);
+  const [asked, setAsked] = useState(false);
   const media = message.media;
 
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
@@ -246,9 +248,17 @@ function MediaAttachment({ message }: { message: StoredMessage }) {
   async function open() {
     if (url || !client || !media) return;
     setLoading(true);
+    setGone(false);
     try {
       const blob = await client.fetchMedia(media);
       setUrl(URL.createObjectURL(blob));
+    } catch {
+      // The blob is past the server's retention window. A sibling device may
+      // still have the bytes cached, so ask -- and say what is happening
+      // rather than leaving a placeholder that just does not work.
+      setGone(true);
+      const asked = await client.requestMissingMedia([message]).catch(() => 0);
+      setAsked(asked > 0);
     } finally {
       setLoading(false);
     }
@@ -272,7 +282,15 @@ function MediaAttachment({ message }: { message: StoredMessage }) {
         </span>
       )}
       <span className={styles.mediaBadge}>
-        {loading ? "Downloading…" : isVideo ? "Tap to play" : "Tap to load"}
+        {loading
+          ? "Downloading…"
+          : gone
+            ? asked
+              ? "Asking your other device…"
+              : "No longer on the server"
+            : isVideo
+              ? "Tap to play"
+              : "Tap to load"}
       </span>
     </button>
   );
