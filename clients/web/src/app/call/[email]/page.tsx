@@ -212,6 +212,17 @@ export default function CallPage() {
   const chat = state?.chat ?? [];
   const unreadChat = showChat ? 0 : Math.max(0, chat.length - seenChat);
   const pinned = prunePin(state?.pinned ?? null, participants.map((p) => p.identity));
+
+  // Raised hands and in-call messages arrive keyed by LiveKit *identity*,
+  // which is a device id. nameFor expects an address, so it has to be mapped
+  // through the participant list first -- without this the UI names people by
+  // a uuid, which is what a two-participant call showed and a one-participant
+  // one could not.
+  const nameForIdentity = (identity: string) => {
+    if (identity === local?.identity) return "You";
+    const email = participants.find((p) => p.identity === identity)?.email;
+    return email ? nameFor(email) : "Someone";
+  };
   const main = mainSpeaker(ordered, pinned, ordered.find((p) => p.speaking)?.identity ?? null);
 
   return (
@@ -435,7 +446,7 @@ export default function CallPage() {
           <Icon name="hand" size={14} />
           <span>
             {raised
-              .map((identity) => (identity === local?.identity ? "You" : nameFor(identity)))
+              .map(nameForIdentity)
               .join(", ")}
           </span>
         </div>
@@ -453,7 +464,7 @@ export default function CallPage() {
             {chat.map((entry) => (
               <li key={`${entry.atMs}-${entry.from}`} className={styles.callChatRow}>
                 <span className={styles.callChatWho}>
-                  {entry.mine ? "You" : nameFor(entry.from)}
+                  {entry.mine ? "You" : nameForIdentity(entry.from)}
                 </span>
                 <span className={styles.callChatBody}>{entry.body}</span>
               </li>
