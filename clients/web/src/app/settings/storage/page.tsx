@@ -26,6 +26,7 @@ export default function StoragePage() {
   const [quota, setQuota] = useState<{ usage: number; quota: number } | null>(null);
   const [busy, setBusy] = useState<"clear" | "prune" | "persist" | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   const refresh = useCallback(() => {
     cacheUsage().then(setUsage);
@@ -42,7 +43,11 @@ export default function StoragePage() {
       <Pane>
         <PaneHeader title="Storage" backHref="/settings" />
         <PaneScroll>
-          {note && <p style={{ color: "var(--ok)", padding: "10px 16px" }}>{note}</p>}
+          {note && (
+            <p role="status" style={{ color: "var(--ok)", padding: "10px 16px" }}>
+              {note}
+            </p>
+          )}
 
           <div className={themeStyles.section}>
             <h2 className={themeStyles.sectionTitle}>Media on this device</h2>
@@ -123,24 +128,56 @@ export default function StoragePage() {
             >
               {busy === "prune" ? "Trimming…" : "Trim to the cache limit"}
             </button>
-            <button
-              className={themeStyles.reset}
-              style={{ color: "var(--danger)" }}
-              type="button"
-              disabled={busy !== null}
-              onClick={async () => {
-                setBusy("clear");
-                try {
-                  await clearCache();
-                  setNote("Cached media cleared.");
-                  refresh();
-                } finally {
-                  setBusy(null);
-                }
-              }}
-            >
-              {busy === "clear" ? "Clearing…" : "Clear all cached media"}
-            </button>
+            {/* Two steps, because this is irreversible and the paragraph above
+                says so: for anything past the server's window this cache is
+                the only copy, and a single mis-tap destroying it is the
+                behaviour a confirm step exists to prevent. */}
+            {confirmingClear ? (
+              <div className={themeStyles.options} role="group" aria-label="Confirm clearing media">
+                <button
+                  className={themeStyles.reset}
+                  style={{ color: "var(--danger)" }}
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={async () => {
+                    setBusy("clear");
+                    try {
+                      const before = usage?.bytes ?? 0;
+                      await clearCache();
+                      setNote(
+                        `Cleared ${sizeLabel(before)} of cached media. Anything past the server's seven days is now only in a backup.`
+                      );
+                      refresh();
+                    } finally {
+                      setBusy(null);
+                      setConfirmingClear(false);
+                    }
+                  }}
+                >
+                  {busy === "clear"
+                    ? "Clearing…"
+                    : `Yes, delete ${usage ? sizeLabel(usage.bytes) : "everything"}`}
+                </button>
+                <button
+                  className={themeStyles.reset}
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => setConfirmingClear(false)}
+                >
+                  Keep it
+                </button>
+              </div>
+            ) : (
+              <button
+                className={themeStyles.reset}
+                style={{ color: "var(--danger)" }}
+                type="button"
+                disabled={busy !== null || (usage?.files ?? 0) === 0}
+                onClick={() => setConfirmingClear(true)}
+              >
+                {(usage?.files ?? 0) === 0 ? "Nothing cached to clear" : "Clear all cached media"}
+              </button>
+            )}
             <p className={themeStyles.hint}>
               Messages are not affected. Media still within the server&apos;s seven-day window is
               fetched again on demand; anything older is gone unless it is in a backup.

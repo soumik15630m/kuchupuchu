@@ -336,3 +336,48 @@
   line-height: 1.4;
   color: var(--ink-muted);
 }
+
+/* Replying to a status. Sends an ordinary message to the author quoting the
+   post — see client.replyToStatus. */
+.replyForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.replyInput {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 14px;
+}
+
+.replyInput::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.replySend {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.replySend:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

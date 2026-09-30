@@ -7,6 +7,9 @@ import { albumColumns } from "@/lib/messaging/albums.mjs";
 import type { StoredMessage } from "@/lib/messaging/store";
 
 import styles from "./chat.module.css";
+
+/** Same set the bubble menu offers, so the two do not disagree. */
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 import { useDialog } from "@/lib/a11y/useDialog";
 
 /** Several photos sent together, as one grid.
@@ -98,6 +101,9 @@ export function AlbumViewer({
   onForward,
   onStar,
   onShowInfo,
+  onReact,
+  onTogglePin,
+  pinned,
 }: {
   message: StoredMessage;
   urlFor: (message: StoredMessage) => Promise<string | undefined>;
@@ -108,6 +114,9 @@ export function AlbumViewer({
   onForward?: (message: StoredMessage) => void;
   onStar?: (message: StoredMessage) => void;
   onShowInfo?: (message: StoredMessage) => void;
+  onReact?: (message: StoredMessage, emoji: string) => void;
+  onTogglePin?: (message: StoredMessage, pin: boolean) => void;
+  pinned?: boolean;
 }) {
   const [url, setUrl] = useState<string | undefined>();
 
@@ -141,6 +150,22 @@ export function AlbumViewer({
         <span className={styles.albumPending} />
       )}
 
+      {onReact && (
+        <div className={styles.albumViewerReactions} onClick={(e) => e.stopPropagation()}>
+          {QUICK_REACTIONS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              aria-label={`React ${emoji}`}
+              data-active={message.reactions && Object.values(message.reactions).includes(emoji)}
+              onClick={() => onReact(message, emoji)}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div
         className={styles.albumViewerBar}
         // The backdrop closes on click; the bar must not.
@@ -164,6 +189,16 @@ export function AlbumViewer({
             onClick={() => onStar(message)}
           >
             <Icon name="star" size={18} />
+          </button>
+        )}
+        {onTogglePin && (
+          <button
+            type="button"
+            aria-label={pinned ? "Unpin" : "Pin"}
+            aria-pressed={Boolean(pinned)}
+            onClick={() => onTogglePin(message, !pinned)}
+          >
+            <Icon name="pin" size={18} />
           </button>
         )}
         {onShowInfo && message.outgoing && (

@@ -72,14 +72,21 @@ and its outage are what the dual channel is for.
 it exists to solve "strangers at scale". The allowlist is capped at ten people
 who already know each other.
 
-**Replying to a status.** You can view one and the author learns it was seen,
-but there is no way to answer it from the viewer. Known gap, not a decision.
+## Grouping and disappearing, after the screen-by-screen pass
 
-**Reactions and pinning from inside an album.** A photo in a grid has no
-bubble menu; the viewer carries reply, forward, star and info, and a
-long-press ungroups the album so every other action is reachable through the
-ordinary bubble. Reacting to one photo without ungrouping first is the one
-thing still missing.
+A photo inside an album has no bubble, so the viewer carries the actions —
+react, reply, forward, star, pin, info — and a long-press ungroups the album
+so the ordinary bubble menu is reachable too. Selection mode never groups.
+
+A status deletes its decrypted blob when it expires, not just its record.
+The viewer pauses while held, while a reply is being typed and while the tab
+is hidden, and only marks a post seen when it is actually on screen: the
+timer used to run in a background tab and tell the author you had watched
+things you never looked at.
+
+Clearing cached media asks first and names the amount. For anything past the
+server's seven-day window that cache is the only copy, so a single mis-tap
+destroying it was the wrong default.
 
 ## Verified against real services
 

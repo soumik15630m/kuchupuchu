@@ -1020,6 +1020,32 @@ export class MessagingClient {
     await this.api.sendMessage({ client_msg_id: id, kind: "text", recipients: targets });
   }
 
+  /** Answers a status.
+   *
+   * An ordinary direct message to the author, quoting the post. No new
+   * content kind and nothing status-specific on the wire: the reply belongs
+   * in the conversation, which is where the author will look for it, and it
+   * outlives the status the way a reply should.
+   */
+  async replyToStatus(post: StatusPost, body: string): Promise<void> {
+    const text = body.trim();
+    if (!text) return;
+    await this.send(
+      { kind: "direct", email: post.authorEmail },
+      {
+        kind: "text",
+        body: text,
+        replyTo: {
+          id: post.id,
+          // Media statuses have no body, so the quote says what it was rather
+          // than rendering as an empty bar.
+          body: post.body || (post.media ? "Status photo" : "Status"),
+          fromEmail: post.authorEmail,
+        },
+      }
+    );
+  }
+
   /** Tells the author their status was seen. */
   async markStatusViewed(post: StatusPost): Promise<void> {
     const updated = await markViewed(post.id);

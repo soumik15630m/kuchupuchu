@@ -1,5 +1,6 @@
 import type { MediaRef } from "./store";
 import { openStore } from "../idb";
+import { deleteCachedMedia } from "./media-cache";
 
 /** §10.5-adjacent: a status post is an ordinary encrypted message fanned out to
  * every member, kept in its own store and expired locally after 24h. It needs
@@ -55,6 +56,11 @@ export async function getStatus(id: string): Promise<StatusPost | null> {
 }
 
 export async function deleteStatus(id: string): Promise<void> {
+  // The blob goes with the record. Deleting only the post left the decrypted
+  // photo sitting in the media cache forever, which makes "disappears after
+  // 24 hours" false in the one way that matters -- the bytes are still there.
+  const post = await getStatus(id);
+  if (post?.media) await deleteCachedMedia(post.media.mediaId);
   await run("readwrite", (s) => s.delete(id));
 }
 

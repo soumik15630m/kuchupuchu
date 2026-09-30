@@ -738,6 +738,11 @@ export default function ChatPage() {
             onReply={setReplyTo}
             onForward={setForwarding}
             onShowInfo={setInfoFor}
+            pinned={pinnedIds.includes(viewing.id)}
+            onReact={(msg, emoji) => chat.target && void client?.react(chat.target, msg.id, emoji)}
+            onTogglePin={(msg, pin) =>
+              chat.target && void client?.setPinned(chat.target, msg.id, pin)
+            }
             onStar={async (msg) => {
               const updated = await setStarred(msg.id, !msg.starred);
               if (updated) {

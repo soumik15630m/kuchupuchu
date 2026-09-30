@@ -1874,3 +1874,32 @@
 .albumViewerBar button[aria-pressed="true"] {
   color: var(--accent);
 }
+
+.albumViewerReactions {
+  position: absolute;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.albumViewerReactions button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.albumViewerReactions button:hover,
+.albumViewerReactions button[data-active="true"] {
+  background: rgba(255, 255, 255, 0.2);
+}
