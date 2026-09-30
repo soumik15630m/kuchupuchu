@@ -564,3 +564,40 @@
   color: var(--text);
   font-size: 14px;
 }
+
+/* Spotlight: what a pin actually does. Without this the pin changed an icon
+   and nothing else, which is worse than not offering it. */
+.spotlight {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+}
+
+.spotlightMain {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+}
+
+.spotlightStrip {
+  flex: 0 0 22%;
+  min-height: 0;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.spotlightStrip > * {
+  /* Capped at five participants (livekit.yaml), so a fixed share rather than
+     a scroll is enough for every real case. */
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.tile[data-main="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

@@ -6,7 +6,6 @@ import {
   EPHEMERAL_DURATIONS,
   canEdit,
   describeDuration,
-  editWindowRemainingMs,
   expiredAmong,
   expiryFor,
   isExpired,
@@ -133,8 +132,3 @@ test("only text is editable", () => {
   }
 });
 
-test("the remaining window counts down and floors at zero", () => {
-  assert.equal(editWindowRemainingMs(message(), NOW), EDIT_WINDOW_MS);
-  assert.equal(editWindowRemainingMs(message(), NOW + 60_000), EDIT_WINDOW_MS - 60_000);
-  assert.equal(editWindowRemainingMs(message(), NOW + 100 * 60_000), 0);
-});

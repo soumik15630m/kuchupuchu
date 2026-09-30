@@ -318,6 +318,7 @@ export function MessageBubble({
   onTogglePin,
   onShowInfo,
   pinned,
+  highlight,
 }: {
   message: StoredMessage;
   mentionables?: Map<string, string>;
@@ -343,6 +344,8 @@ export function MessageBubble({
    * who read someone else's. */
   onShowInfo?: (message: StoredMessage) => void;
   pinned?: boolean;
+  /** The find-in-chat query, so matches are visible and not just jumped to. */
+  highlight?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { email: myEmail } = useSession();
@@ -436,7 +439,12 @@ export function MessageBubble({
         {message.link && !message.deletedForEveryone && <LinkPreviewCard preview={message.link} />}
         {message.body && (
           <span className={styles.body}>
-            <FormattedText body={message.body} mentionables={mentionables} selfEmail={myEmail} />
+            <FormattedText
+              body={message.body}
+              mentionables={mentionables}
+              selfEmail={myEmail}
+              highlight={highlight}
+            />
           </span>
         )}
 

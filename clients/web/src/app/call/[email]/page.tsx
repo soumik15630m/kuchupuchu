@@ -287,8 +287,8 @@ export default function CallPage() {
           </div>
         </div>
       ) : (
-        <div className={styles.grid} data-count={Math.min(ordered.length, 5)}>
-          {ordered.map((p) => (
+        (() => {
+          const tile = (p: (typeof ordered)[number]) => (
             <VideoTile
               key={p.identity}
               participant={p}
@@ -299,8 +299,28 @@ export default function CallPage() {
               isMain={main?.identity === p.identity}
               onTogglePin={() => engineRef.current?.setPinned(togglePin(pinned, p.identity))}
             />
-          ))}
-        </div>
+          );
+
+          // Pinning has to change the layout or the control is a lie. With a
+          // pin the call becomes a spotlight: the pinned tile takes the room
+          // and everyone else drops to a strip underneath.
+          if (pinned && ordered.length > 1 && main) {
+            return (
+              <div className={styles.spotlight}>
+                <div className={styles.spotlightMain}>{tile(main)}</div>
+                <div className={styles.spotlightStrip}>
+                  {ordered.filter((p) => p.identity !== main.identity).map(tile)}
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div className={styles.grid} data-count={Math.min(ordered.length, 5)}>
+              {ordered.map(tile)}
+            </div>
+          );
+        })()
       )}
 
       {state?.audioBlocked && (

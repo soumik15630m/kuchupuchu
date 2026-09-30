@@ -532,6 +532,7 @@ export default function ChatPage() {
                         chat.target && void client?.setPinned(chat.target, msg.id, pin)
                       }
                       onShowInfo={setInfoFor}
+                      highlight={finding ? findQuery : undefined}
                       onForward={setForwarding}
                       onSelect={(msg) => setSelection(new Set([msg.id]))}
                       onStar={async (msg) => {

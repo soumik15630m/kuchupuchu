@@ -24,8 +24,4 @@ export function canEdit(
   nowMs: number,
   selfEmail: string
 ): boolean;
-export function editWindowRemainingMs(
-  message: Pick<StoredMessage, "sentAtMs">,
-  nowMs: number
-): number;
 export function timerNotice(actorName: string, durationMs: number): string;

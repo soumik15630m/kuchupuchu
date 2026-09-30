@@ -261,3 +261,11 @@
   color: var(--ink-muted);
   background: var(--bg-sunken);
 }
+
+/* The arrow-key cursor in search results. Distinct from :hover so a keyboard
+   user can see where they are without a mouse anywhere near the list. */
+.item[data-cursor="true"] {
+  background: var(--hover);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

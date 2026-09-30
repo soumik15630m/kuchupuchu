@@ -25,7 +25,7 @@ import {
 } from "@/lib/messaging/chat-settings";
 
 import styles from "@/app/chats/chats.module.css";
-import { isSearchShortcut, isTypingTarget } from "@/lib/a11y/focus.mjs";
+import { isSearchShortcut, isTypingTarget, nextListIndex } from "@/lib/a11y/focus.mjs";
 
 function preview(message: StoredMessage | null): string {
   if (!message) return "No messages yet";
@@ -61,6 +61,8 @@ export function ChatListPane() {
   const [showArchived, setShowArchived] = useState(false);
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** Which search result the arrow keys are on; -1 when none. */
+  const [cursor, setCursor] = useState(-1);
 
   // Ctrl/Cmd+K focuses search from anywhere in the list. Deliberately not
   // bound while the member is typing into something: stealing a keypress from
@@ -93,6 +95,7 @@ export function ChatListPane() {
     }
     let cancelled = false;
     const handle = setTimeout(() => {
+      setCursor(-1);
       searchMessages(term).then((found) => {
         if (!cancelled) setHits(found);
       });
@@ -187,9 +190,25 @@ export function ChatListPane() {
             onKeyDown={(e) => {
               // Escape clears first and only then gives up focus, so one press
               // is never ambiguous between "undo the filter" and "leave".
-              if (e.key !== "Escape") return;
-              if (query) setQuery("");
-              else e.currentTarget.blur();
+              if (e.key === "Escape") {
+                if (query) setQuery("");
+                else e.currentTarget.blur();
+                return;
+              }
+              // Type, then arrow down into the results without leaving the
+              // field -- the pattern every search box has. Does not wrap:
+              // holding Down at the bottom jumping back to the top reads as
+              // the list having reset.
+              if (!hits || hits.length === 0) return;
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                setCursor((at) => nextListIndex(at, hits.length, e.key === "ArrowDown" ? 1 : -1));
+                return;
+              }
+              if (e.key === "Enter" && cursor >= 0 && hits[cursor]) {
+                e.preventDefault();
+                router.push(`/chats/${encodeURIComponent(hits[cursor].chatId)}`);
+              }
             }}
             placeholder="Search"
             aria-label="Search chats"
@@ -221,6 +240,7 @@ export function ChatListPane() {
                   key={hit.message.id}
                   type="button"
                   className={styles.item}
+                  data-cursor={hits[cursor]?.message.id === hit.message.id ? "true" : undefined}
                   onClick={() => router.push(`/chats/${encodeURIComponent(hit.chatId)}`)}
                 >
                   <span className={styles.avatar}>

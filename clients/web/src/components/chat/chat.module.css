@@ -1829,3 +1829,12 @@
   background: var(--panel);
   border-top: 1px solid var(--border);
 }
+
+/* Find-in-chat matches. <mark>'s default yellow is unreadable on both
+   bubble colours, so it is restyled rather than inherited. */
+.searchHit {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 1px;
+}

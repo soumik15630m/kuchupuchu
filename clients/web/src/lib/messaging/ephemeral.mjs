@@ -77,9 +77,6 @@ export function canEdit(message, nowMs, selfEmail) {
   return nowMs - message.sentAtMs <= EDIT_WINDOW_MS;
 }
 
-export function editWindowRemainingMs(message, nowMs) {
-  return Math.max(0, message.sentAtMs + EDIT_WINDOW_MS - nowMs);
-}
 
 /** The line shown when the timer changes. Generated locally on both sides
  * from the control message, so it is never a bubble anyone sent. */

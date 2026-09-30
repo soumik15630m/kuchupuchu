@@ -10,11 +10,20 @@ Private voice/video app for a fixed group of ~10 people, built around an
 India↔Russia link. Design doc: `docs/design-doc-v6.md` — §1a (hosting),
 §3a (layout), §13 (phases and their done-bars).
 
-Phases 1-4 are done and validated. Phase 5 is in progress: the web client
-and messaging service are built and working; `clients/android/` and
-`services/wake-service/` are still placeholders. Messaging (design-doc
-Phase 6) was deliberately pulled forward into the web build, so §13's
-Phase 5/6 split no longer matches what is here.
+Phases 1-4 are done and validated.
+
+**Phase 5's web half is done** — see `docs/phase-5-web.md` for what that
+covers and, more usefully, what it deliberately does not. The web client,
+messaging service and wake service are built, tested and validated against
+real services in a real browser.
+
+Phase 5 as a whole is **not** done: §13's done-bar is an incoming call ringing
+on an Android lock screen, and `clients/android/` is still a placeholder. The
+wake service ships the Web Push half of §10.2's dual channel; the persistent-WS
+fallback arrives with the Android client, which is the case it exists for.
+
+Messaging (design-doc Phase 6) was deliberately pulled forward into the web
+build, so §13's Phase 5/6 split no longer matches what is here.
 
 ## Layout
 
@@ -23,6 +32,9 @@ Phase 5/6 split no longer matches what is here.
 - `services/messaging-service/` — FastAPI + SQLite. Store-and-forward for
   encrypted messages, media blobs, receipts, and the delivery WebSocket. Reads
   auth-service's SQLite read-only for the device-status check.
+- `services/wake-service/` — FastAPI + SQLite. Web Push (RFC 8291/8292),
+  written out rather than pulled in. Holds where to reach each device and
+  nothing about what was sent; the payload carries no sender and no content.
 - `clients/web/` — Next.js + TypeScript. Calls (LiveKit + the Phase 4 E2EE
   stack), messaging (its own bidirectional Double Ratchet), theming.
 - `infra/` — nginx (SNI stream-demux on 443), coturn, livekit, cert generation.
@@ -35,6 +47,7 @@ Phase 5/6 split no longer matches what is here.
 ```bash
 python -m pytest services/auth-service/tests -q
 cd services/messaging-service && python -m pytest tests -q
+cd services/wake-service && python -m pytest tests -q
 cd testing/webrtc-harness && node --test test/*.test.mjs
 cd clients/web && npm test && npm run build
 ```
