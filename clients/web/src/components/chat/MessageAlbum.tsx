@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { Icon } from "@/components/Icon";
 import { albumColumns } from "@/lib/messaging/albums.mjs";
 import type { StoredMessage } from "@/lib/messaging/store";
 
@@ -93,10 +94,20 @@ export function AlbumViewer({
   message,
   urlFor,
   onClose,
+  onReply,
+  onForward,
+  onStar,
+  onShowInfo,
 }: {
   message: StoredMessage;
   urlFor: (message: StoredMessage) => Promise<string | undefined>;
   onClose: () => void;
+  /** A photo in a grid has no bubble menu, so the actions live here instead —
+   * otherwise grouping silently costs a photo everything it could do. */
+  onReply?: (message: StoredMessage) => void;
+  onForward?: (message: StoredMessage) => void;
+  onStar?: (message: StoredMessage) => void;
+  onShowInfo?: (message: StoredMessage) => void;
 }) {
   const [url, setUrl] = useState<string | undefined>();
 
@@ -129,6 +140,41 @@ export function AlbumViewer({
       ) : (
         <span className={styles.albumPending} />
       )}
+
+      <div
+        className={styles.albumViewerBar}
+        // The backdrop closes on click; the bar must not.
+        onClick={(e) => e.stopPropagation()}
+      >
+        {onReply && (
+          <button type="button" aria-label="Reply" onClick={() => { onReply(message); onClose(); }}>
+            <Icon name="back" size={18} />
+          </button>
+        )}
+        {onForward && (
+          <button type="button" aria-label="Forward" onClick={() => { onForward(message); onClose(); }}>
+            <Icon name="forward" size={18} />
+          </button>
+        )}
+        {onStar && (
+          <button
+            type="button"
+            aria-label={message.starred ? "Unstar" : "Star"}
+            aria-pressed={Boolean(message.starred)}
+            onClick={() => onStar(message)}
+          >
+            <Icon name="star" size={18} />
+          </button>
+        )}
+        {onShowInfo && message.outgoing && (
+          <button type="button" aria-label="Info" onClick={() => { onShowInfo(message); onClose(); }}>
+            <Icon name="info" size={18} />
+          </button>
+        )}
+        <button type="button" aria-label="Close" onClick={onClose}>
+          <Icon name="close" size={18} />
+        </button>
+      </div>
     </div>
   );
 }

@@ -42,6 +42,7 @@ import {
 import { wallpaperStyle } from "@/lib/theme/apply";
 import { useTheme } from "@/lib/theme/ThemeProvider";
 import { getWallpaper } from "@/lib/theme/wallpaper-store";
+import { describeDuration } from "@/lib/messaging/ephemeral.mjs";
 
 function dayLabel(ms: number): string {
   const date = new Date(ms);
@@ -155,6 +156,13 @@ export default function ChatPage() {
   const [findCursor, setFindCursor] = useState(-1);
   const [infoFor, setInfoFor] = useState<StoredMessage | null>(null);
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
+  const [ephemeralMs, setEphemeralMs] = useState(0);
+
+  // Re-read on every revision: the peer can change the timer too, and the
+  // control message writes straight to the same store.
+  useEffect(() => {
+    setEphemeralMs(settingsFor(email).ephemeralMs ?? 0);
+  }, [email, revision]);
   const [viewing, setViewing] = useState<StoredMessage | null>(null);
 
   // Album cells resolve their own blobs. Cached first, so scrolling back
@@ -320,8 +328,17 @@ export default function ChatPage() {
         <PaneHeader
           title={name}
           subtitle={
-            typingLabel(typing.map(nameFor), Boolean(chat.group)) ??
-            (chat.group ? chat.subtitle : (presenceSubtitle ?? chat.subtitle))
+            // The timer is appended rather than replacing presence: a chat on
+            // a timer that also shows "online" needs to say both. Setting it
+            // produced one system notice and then nothing, so scrolling back
+            // later there was no way to tell the chat was still on a clock.
+            [
+              typingLabel(typing.map(nameFor), Boolean(chat.group)) ??
+                (chat.group ? chat.subtitle : (presenceSubtitle ?? chat.subtitle)),
+              ephemeralMs > 0 ? `disappearing · ${describeDuration(ephemeralMs)}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined
           }
           backHref="/chats"
           actions={
@@ -475,7 +492,14 @@ export default function ChatPage() {
                   Load earlier messages
                 </button>
               )}
-              {groupIntoAlbums(windowed).map((row) => {
+              {/* Selection mode ungroups: a photo in a grid has no menu, no
+                  ticks and no checkbox, so grouping while selecting would
+                  make exactly the photos someone is trying to act on the
+                  ones they cannot. */}
+              {(selection !== null
+                ? windowed.map((message) => ({ type: "message" as const, message }))
+                : groupIntoAlbums(windowed)
+              ).map((row) => {
                 const message = row.type === "album" ? row.messages[0] : row.message;
                 const day = dayLabel(message.sentAtMs);
                 const separator = day !== lastDay ? day : null;
@@ -495,6 +519,7 @@ export default function ChatPage() {
                         messages={row.messages}
                         urlFor={albumUrlFor}
                         onOpen={setViewing}
+                        onMenu={(msg) => setSelection(new Set([msg.id]))}
                       />
                     ) : (
                     <MessageBubble
@@ -706,7 +731,21 @@ export default function ChatPage() {
 
         {viewing && (
 
-          <AlbumViewer message={viewing} urlFor={albumUrlFor} onClose={() => setViewing(null)} />
+          <AlbumViewer
+            message={viewing}
+            urlFor={albumUrlFor}
+            onClose={() => setViewing(null)}
+            onReply={setReplyTo}
+            onForward={setForwarding}
+            onShowInfo={setInfoFor}
+            onStar={async (msg) => {
+              const updated = await setStarred(msg.id, !msg.starred);
+              if (updated) {
+                setMessages((prev) => prev.map((m) => (m.id === msg.id ? updated : m)));
+                setViewing(updated);
+              }
+            }}
+          />
 
         )}
 

@@ -72,6 +72,15 @@ and its outage are what the dual channel is for.
 it exists to solve "strangers at scale". The allowlist is capped at ten people
 who already know each other.
 
+**Replying to a status.** You can view one and the author learns it was seen,
+but there is no way to answer it from the viewer. Known gap, not a decision.
+
+**Reactions and pinning from inside an album.** A photo in a grid has no
+bubble menu; the viewer carries reply, forward, star and info, and a
+long-press ungroups the album so every other action is reachable through the
+ordinary bubble. Reacting to one photo without ungrouping first is the one
+thing still missing.
+
 ## Verified against real services
 
 OTP login, E2EE messaging, group chat, media, calls, tenant isolation in both

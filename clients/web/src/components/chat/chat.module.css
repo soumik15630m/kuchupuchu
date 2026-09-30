@@ -1838,3 +1838,39 @@
   border-radius: 3px;
   padding: 0 1px;
 }
+
+/* Actions for a photo inside an album. The grid has no room for a per-cell
+   menu, so they live in the viewer — without them, grouping would quietly
+   cost a photo everything a bubble could do. */
+.albumViewerBar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.albumViewerBar button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #fff;
+  cursor: pointer;
+}
+
+.albumViewerBar button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.albumViewerBar button[aria-pressed="true"] {
+  color: var(--accent);
+}
