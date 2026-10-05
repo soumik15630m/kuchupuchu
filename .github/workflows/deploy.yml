@@ -1,0 +1,160 @@
+name: Deploy
+
+# Manual by default. A messaging app for ten people does not want a push to
+# master to restart the calls two of them are on, and a deploy nobody chose
+# the moment for is the kind that happens at 2am.
+#
+# Set DEPLOY_ON_PUSH to "true" in the repository variables to make every green
+# master build deploy itself.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit, tag or branch to deploy"
+        required: false
+        default: ""
+  push:
+    branches: ["master"]
+
+concurrency:
+  # Never two deploys at once: the second would pull images out from under the
+  # first while compose was still swapping containers.
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  gate:
+    name: should this deploy
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.decide.outputs.go }}
+    steps:
+      - id: decide
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ vars.DEPLOY_ON_PUSH }}" = "true" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "Push deploys are off. Run this workflow manually, or set the"
+            echo "DEPLOY_ON_PUSH repository variable to true."
+          fi
+
+  build:
+    name: build ${{ matrix.service }}
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: auth-service
+            context: services/auth-service
+          - service: messaging-service
+            context: services/messaging-service
+          - service: wake-service
+            context: services/wake-service
+          - service: web
+            context: clients/web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          # Tagged by commit, never only by a moving name. A rollback needs a
+          # tag that still means the same bytes next week.
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  deploy:
+    name: deploy to the server
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Push the new tag and restart
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+
+            # The compose files and scripts come from git; only the images come
+            # from the registry. .env never does: it holds the secrets and
+            # lives only on this machine.
+            git fetch --quiet origin
+            git checkout --quiet "${{ github.sha }}"
+
+            # Written into .env rather than exported, so a later `docker
+            # compose up -d` typed by hand uses the same images as this deploy
+            # instead of silently rebuilding from source.
+            set_env() {
+              if grep -q "^$1=" .env; then
+                sed -i "s|^$1=.*|$1=$2|" .env
+              else
+                printf '%s=%s\n' "$1" "$2" >> .env
+              fi
+            }
+            set_env IMAGE_PREFIX "ghcr.io/${{ github.repository }}-"
+            set_env IMAGE_TAG "${{ github.sha }}"
+
+            docker compose pull
+            docker compose up -d --remove-orphans
+
+            # Old images pile up fast on a small disk, and a full disk is how
+            # SQLite databases get corrupted.
+            docker image prune -f --filter "until=168h"
+
+      - name: Check it answers
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+            . ./.env
+
+            # From the server, through nginx, over real TLS: the same path a
+            # member takes. Checking the container is running proves less.
+            for attempt in $(seq 1 30); do
+              if curl -sfI --max-time 5 "https://${PUBLIC_HOSTNAME}/healthz" >/dev/null; then
+                echo "healthy after ${attempt} attempt(s)"
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "still not answering; recent logs:" >&2
+            docker compose ps >&2
+            docker compose logs --tail 60 nginx auth-service >&2
+            exit 1

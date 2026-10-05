@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+  workflow_dispatch:
+
+# A second push supersedes the first: nothing is learned from finishing a run
+# against a commit that has already been replaced.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  services:
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth-service, messaging-service, wake-service]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
+      # --no-deps with the hash-pinned lock: the lock already names every
+      # transitive dependency, and letting pip resolve again would silently
+      # accept something the lock does not cover.
+      - name: Install
+        working-directory: services/${{ matrix.service }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Test
+        working-directory: services/${{ matrix.service }}
+        # Set here rather than in conftest so a suite that forgets it fails
+        # loudly in CI rather than reading whatever .env happens to exist.
+        env:
+          KUCHUPUCHU_SKIP_DOTENV: "1"
+        run: python -m pytest tests -q
+
+  web:
+    name: web client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+
+      - name: Install
+        working-directory: clients/web
+        run: npm ci
+
+      - name: Test
+        working-directory: clients/web
+        run: npm test
+
+      - name: Typecheck
+        working-directory: clients/web
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: clients/web
+        run: npm run build
+
+  harness:
+    name: webrtc harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test
+        working-directory: testing/webrtc-harness
+        run: node --test test/*.test.mjs
+
+  compose:
+    name: compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The dev and production stacks both have to parse. A broken overlay is
+      # otherwise discovered on the server, during a deploy, by an operator.
+      - name: Validate the development stack
+        run: docker compose --env-file .env.example -f docker-compose.yml config -q
+
+      - name: Validate the production stack
+        run: |
+          docker compose --env-file .env.example \
+            -f docker-compose.yml -f docker-compose.prod.yml config -q
+
+      - name: Validate the testing overlay
+        run: |
+          docker compose --env-file .env.example \
+            -f docker-compose.yml -f docker-compose.testing.yml config -q
+
+  shell:
+    name: deploy scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # These run on a server, once, usually at the worst possible moment.
+      # A syntax error in them is not something to find out there. Both
+      # shells, because the containers use /bin/sh and an operator runs the
+      # scripts under bash -- and the two disagree about more than they look
+      # like they should.
+      - name: Parse under sh and bash
+        run: |
+          for f in scripts/*.sh infra/*/*.sh services/*/docker-entrypoint.sh; do
+            sh -n "$f" || { echo "sh cannot parse $f"; exit 1; }
+            bash -n "$f" || { echo "bash cannot parse $f"; exit 1; }
+          done
+
+      - name: shellcheck
+        run: shellcheck scripts/bootstrap.sh scripts/deploy.sh infra/acme/docker-entrypoint.sh

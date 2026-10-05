@@ -1,11 +1,16 @@
 import hmac
+import json
+import logging
 import os
+from pathlib import Path
 
 import jwt
 from fastapi import Header, HTTPException
 
 from app.db import get_auth_db
-from app.vapid import load_private_key
+from app.vapid import generate_keypair, load_private_key
+
+logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_SECRETS = frozenset(
     {"change_me_to_a_long_random_secret", "changeme", "change_me", "secret", "devkey"}
@@ -26,18 +31,14 @@ def _require_secret(name: str) -> str:
 
 def validate_secrets() -> None:
     """Fails startup rather than running a wake service that cannot wake
-    anything. A missing VAPID key is not a degraded mode -- every push would
-    be rejected by the push service, silently, forever."""
+    anything. The shared secrets have to be chosen by a person; the VAPID
+    pair does not, so that one is generated and kept rather than demanded."""
     _require_secret("JWT_SECRET")
     _require_secret("WAKE_INTERNAL_SECRET")
 
-    private = os.environ.get("WAKE_VAPID_PRIVATE_KEY")
-    public = os.environ.get("WAKE_VAPID_PUBLIC_KEY")
-    if not private or not public:
-        raise RuntimeError(
-            "WAKE_VAPID_PRIVATE_KEY and WAKE_VAPID_PUBLIC_KEY are not set; "
-            "generate a pair with `python -m app.vapid keygen`"
-        )
+    private, public = ensure_vapid_keypair()
+    os.environ["WAKE_VAPID_PRIVATE_KEY"] = private
+    os.environ["WAKE_VAPID_PUBLIC_KEY"] = public
     # Parsed at startup, not at first push: a malformed key otherwise surfaces
     # as notifications that never arrive rather than as a service that refuses
     # to start.
@@ -48,6 +49,44 @@ def validate_secrets() -> None:
             "WAKE_VAPID_SUBJECT is not set; RFC 8292 requires a mailto: or https: "
             "contact the push service operator can reach"
         )
+
+
+def vapid_key_path() -> Path:
+    return Path(os.environ.get("WAKE_VAPID_KEY_PATH", "/data/vapid.json"))
+
+
+def ensure_vapid_keypair() -> tuple[str, str]:
+    """The VAPID pair, from the environment or from disk, generated once.
+
+    Refusing to start without one would be correct but unhelpful: there is
+    exactly one right value and no human judgement in choosing it, so the
+    service makes one and keeps it. What it must never do is make a *new* one
+    on every boot -- a browser refuses a push signed by a key it did not
+    subscribe with, so a regenerated pair silently unsubscribes everybody.
+    Hence written to the data volume and read back, not held in memory.
+
+    An explicit pair in the environment always wins, so an operator who wants
+    to carry keys between machines still can.
+    """
+    private = os.environ.get("WAKE_VAPID_PRIVATE_KEY", "").strip()
+    public = os.environ.get("WAKE_VAPID_PUBLIC_KEY", "").strip()
+    if private and public:
+        return private, public
+
+    path = vapid_key_path()
+    if path.is_file():
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        return stored["private"], stored["public"]
+
+    private, public = generate_keypair()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 0600 before anything is written: the private key must never exist on
+    # disk world-readable, even for the moment between create and chmod.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"private": private, "public": public}, handle)
+    logger.info("generated a VAPID keypair and stored it at %s", path)
+    return private, public
 
 
 def _secret() -> str:

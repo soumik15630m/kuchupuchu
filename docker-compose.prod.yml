@@ -1,0 +1,92 @@
+# Production overlay. Applied on top of docker-compose.yml.
+#
+# `scripts/bootstrap.sh` writes COMPOSE_FILE into .env so a plain
+# `docker compose up -d` picks this up without any -f flags. That matters more
+# than it looks: forgetting the flags would silently start the development
+# stack, which expects mkcert certificates nobody outside one laptop trusts,
+# and the result would *look* like it worked.
+#
+# What this changes:
+#   * real certificates from Let's Encrypt instead of the dev generator
+#   * port 80 published, because HTTP-01 is validated over it
+#   * named images, so CI can build them once and the server only pulls
+
+x-logging: &logging
+  driver: json-file
+  options:
+    # Unbounded logs fill the disk on a small box, and a full disk takes
+    # SQLite down with it.
+    max-size: "10m"
+    max-file: "5"
+
+# IMAGE_PREFIX defaults to a name that exists nowhere but this machine. An
+# unprefixed `image: auth-service` would resolve to docker.io/library/
+# auth-service — a stranger's image — the first time a local build was
+# missing. The default has to be unpullable, not merely unlikely.
+
+services:
+  # Replaces cert-init's job in production. The dev generator is gated behind
+  # DEV_AUTO_CERTS and bootstrap.sh sets that false, so it starts, does
+  # nothing and exits — which is what nginx's completion condition wants.
+  acme:
+    build: ./infra/acme
+    env_file: .env
+    ports:
+      # Owned outright: nginx never binds 80, so standalone HTTP-01 has no
+      # ordering problem with the web server it is issuing certificates for.
+      - "80:80"
+    volumes:
+      - ./certs:/etc/letsencrypt
+    healthcheck:
+      # nginx waits on this rather than on the container exiting, because this
+      # one keeps running to renew. The condition is the only one that
+      # matters: is there a certificate on disk for the name nginx serves.
+      test: ["CMD-SHELL", "test -s /etc/letsencrypt/live/${PUBLIC_HOSTNAME}/fullchain.pem"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    logging: *logging
+    restart: unless-stopped
+
+  nginx:
+    depends_on:
+      acme:
+        condition: service_healthy
+    volumes:
+      # The harness mount from the base file is dropped: it exists for Phase
+      # 3/4 camera testing and has no business on a production origin.
+      - ./certs:/etc/letsencrypt:ro
+    logging: *logging
+
+  # Belt and braces. The generator already refuses unless DEV_AUTO_CERTS is
+  # true; saying it here too means the guard does not rest on one variable in
+  # a file an operator edits by hand.
+  cert-init:
+    environment:
+      - DEV_AUTO_CERTS=false
+
+  auth-service:
+    image: ${IMAGE_PREFIX:-kuchupuchu-local/}auth-service:${IMAGE_TAG:-current}
+    logging: *logging
+
+  messaging-service:
+    image: ${IMAGE_PREFIX:-kuchupuchu-local/}messaging-service:${IMAGE_TAG:-current}
+    logging: *logging
+
+  wake-service:
+    image: ${IMAGE_PREFIX:-kuchupuchu-local/}wake-service:${IMAGE_TAG:-current}
+    logging: *logging
+
+  web:
+    image: ${IMAGE_PREFIX:-kuchupuchu-local/}web:${IMAGE_TAG:-current}
+    logging: *logging
+
+  livekit:
+    logging: *logging
+
+  coturn:
+    logging: *logging
+
+  redis:
+    logging: *logging

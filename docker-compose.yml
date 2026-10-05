@@ -1,7 +1,11 @@
-# Phase 1 scope (design-doc-v6.md §13): SFU + minimal auth walking skeleton.
-# wake-service / messaging-service (Phases 5-6) are stubbed as folders only —
-# not wired in here yet. See §1a for the still-open port-forward/tunnel
-# decision this stack depends on for reachability beyond the local network.
+# The development stack: every service, with mkcert certificates and the test
+# harness mounted.
+#
+# For a real deployment this is only half of it -- docker-compose.prod.yml
+# swaps the dev certificate generator for Let's Encrypt and names the images
+# so CI can build them. scripts/bootstrap.sh writes COMPOSE_FILE into .env so
+# `docker compose up -d` picks up both without any -f flags; see
+# REDEPLOY-RUNBOOK.md.
 
 services:
   # Signs dev TLS certs for the current hostnames before anything
