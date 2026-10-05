@@ -54,9 +54,14 @@ services:
       acme:
         condition: service_healthy
     volumes:
-      # The harness mount from the base file is dropped: it exists for Phase
-      # 3/4 camera testing and has no business on a production origin.
       - ./certs:/etc/letsencrypt:ro
+      # An empty directory over the harness. Restating `volumes` does NOT
+      # remove the base file's harness mount -- compose merges volume lists by
+      # target, so /harness/ was still served from the production origin,
+      # which a first pass of this file wrongly claimed it was not. Same
+      # target, different source: this one wins. A camera-and-microphone test
+      # page does not belong on the origin members actually use.
+      - ./infra/nginx/empty:/usr/share/nginx/harness:ro
     logging: *logging
 
   # Belt and braces. The generator already refuses unless DEV_AUTO_CERTS is

@@ -32,9 +32,46 @@ case "${ACME_STAGING:-false}" in
         ;;
 esac
 
+# A different CA entirely: a private ACME server, ZeroSSL, or a local Pebble
+# when this stack is being tested without a public domain. Overrides staging.
+if [ -n "${ACME_SERVER:-}" ]; then
+    STAGING_FLAG="--server ${ACME_SERVER}"
+    echo "acme: using the ACME server at ${ACME_SERVER}"
+fi
+
+# certbot writes live/ and archive/ as drwx------ root, and the private key as
+# -rw------- root. nginx reads the key as root at config load, so it never
+# noticed; coturn runs as uid 10001 and could not even traverse the directory,
+# which it reported as "no readable TLS certificate ... present: (nothing)".
+#
+# The dev certificate generator solves the same problem with chmod 644 and
+# says in as many words that that is not a pattern to carry over to real keys.
+# It is not carried over: the directories become traversable and the chain
+# world-readable, but the private key is opened only to coturn's group.
+# Nothing else that mounts ./certs runs as that id.
+COTURN_GID="${COTURN_GID:-10001}"
+
+grant_read() {
+    name="$1"
+    chmod 0755 "${CONFIG_DIR}/live" "${CONFIG_DIR}/archive" 2>/dev/null || true
+    chmod 0755 "${CONFIG_DIR}/live/${name}" "${CONFIG_DIR}/archive/${name}" 2>/dev/null || true
+    # chmod follows the symlinks in live/ into archive/, which is what is
+    # wanted: the mode that matters is the real file's.
+    chmod 0644 "${CONFIG_DIR}/live/${name}/fullchain.pem" \
+        "${CONFIG_DIR}/live/${name}/chain.pem" \
+        "${CONFIG_DIR}/live/${name}/cert.pem" 2>/dev/null || true
+    chgrp "${COTURN_GID}" "${CONFIG_DIR}/live/${name}/privkey.pem" 2>/dev/null || true
+    chmod 0640 "${CONFIG_DIR}/live/${name}/privkey.pem" 2>/dev/null || true
+}
+
 issue() {
     name="$1"
     if [ -s "${CONFIG_DIR}/live/${name}/fullchain.pem" ]; then
+        # Re-applied every time, not only after issuance: a renewal writes a
+        # new archive/<name>/privkeyN.pem with certbot's own restrictive mode
+        # and repoints the symlink, so without this TURN quietly stops working
+        # weeks later, when the certificate renews.
+        grant_read "$name"
         return 0
     fi
     echo "acme: requesting a certificate for ${name}"
@@ -47,6 +84,7 @@ issue() {
         -d "${name}" \
         --key-type ecdsa \
         ${STAGING_FLAG}
+    grant_read "$name"
 }
 
 # A failure here must not wedge the container: nginx waits on the healthcheck
