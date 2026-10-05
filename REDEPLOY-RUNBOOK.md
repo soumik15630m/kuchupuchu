@@ -145,6 +145,13 @@ docker compose logs --tail 100 auth-service
 acme` says why — usually DNS not resolving to this machine, or port 80
 unreachable from outside.
 
+**coturn restarts in a loop saying it has no readable certificate.** It runs
+as uid 10001, and certbot writes both the key and the directories above it
+root-only — nginx never notices because it reads them as root at config load.
+The acme service re-grants read access to that group on every pass, renewals
+included, so this should not happen. If the `./certs` tree was ever written
+by something else, `docker compose restart acme` puts the permissions back.
+
 **Calls connect but nobody hears anything.** The UDP ranges are closed.
 Check 3478, 49160-49200 and 20000-20100 in the Hetzner firewall, not just ufw.
 
