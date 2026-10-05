@@ -70,6 +70,20 @@ reach the log.
 
 ## Bringing the stack up
 
-Needs `.env` (copy `.env.example`). `docker compose up -d --build`; add
-`-f docker-compose.testing.yml` for the toxiproxy overlay. auth-service
+Development: needs `.env` (copy `.env.example`). `docker compose up -d --build`;
+add `-f docker-compose.testing.yml` for the toxiproxy overlay. auth-service
 refuses to start on placeholder, short, or reused secrets.
+
+Deployment: `./scripts/deploy.sh app.example.com you@example.com` on a fresh
+server does everything once -- generates every secret, obtains Let's Encrypt
+certificates, starts the stack. After that the only command is
+`docker compose up -d`, because `bootstrap.sh` writes `COMPOSE_FILE` into
+`.env` so the production overlay is picked up without any `-f` flags.
+
+`REDEPLOY-RUNBOOK.md` is the full version: DNS, firewall ports, rollback,
+and restoring after losing the machine.
+
+Secret generation cannot live inside `docker compose up` -- compose parses
+`.env` to interpolate the compose file before it starts any container, so
+nothing it runs can create the file it has already read. That is why there is
+a bootstrap step at all.
